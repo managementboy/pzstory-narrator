@@ -95,15 +95,27 @@ No Gradle, no downloads, no daemon:
 PZ=/path/to/ProjectZomboid ./build.sh
 ```
 
-The build is **deterministic** — sorted inputs and a pinned timestamp — so two
-builds of the same source produce a byte-identical jar and you can check the
-committed binary against your own. Set `SOURCE_DATE_EPOCH` to pin a different
-stamp. It ends by running `tools/verify.sh`, which refuses to ship a jar whose
+The build is **deterministic for the same JDK and game-library toolchain** —
+sorted inputs and a pinned timestamp — so two builds of the same source produce
+a byte-identical jar and you can check the committed binary against your own.
+Set `SOURCE_DATE_EPOCH` to pin a different stamp. It ends by running
+`tools/verify.sh`, which refuses to ship a jar whose
 version disagrees with `mod.info` or the Lua.
 
 You need **JDK 25 or newer** — Project Zomboid 42.20.3 compiles its own classes
 to bytecode major 69, so an older compiler cannot read them. Edit the `LIB`
 path in `build.sh` to point at your game folder.
+
+Before committing a release binary, run:
+
+```sh
+PZ=/path/to/ProjectZomboid ./tools/rebuild-and-compare.sh
+```
+
+That command builds to an isolated temporary path, verifies the rebuilt
+archive, and then performs an exact byte comparison with the committed jar. A
+source change that was not reflected in the binary, an unexpected compiler
+version, entry-order drift, or any other packaging difference makes it fail.
 
 The compiled `PZStory.jar` is committed under `mod/42/media/java/` so the mod
 can be installed without a toolchain. If you would rather not trust a binary
@@ -113,7 +125,7 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release** (`1.24.0`) is
-for people and changes whenever anything ships. **Bridge API** (`2`) changes
+for people and changes whenever anything ships. **Bridge API** (`3`) changes
 only when the Java surface Lua calls actually changes, and Lua compares it for
 exact equality — so a cosmetic release no longer forces a firmware mismatch,
 and an incompatible pairing can no longer load. Both live in
@@ -145,6 +157,7 @@ working on the mod; leave it out if you are playing.
 ```sh
 ./tools/test.sh     # unit tests; no Project Zomboid jars required
 ./tools/verify.sh   # version integrity, jar contents, secret scan
+./tools/rebuild-and-compare.sh # rebuild and byte-compare the release jar
 ```
 
 Both run in CI. Anything that touches `zombie.*` cannot be unit-tested without

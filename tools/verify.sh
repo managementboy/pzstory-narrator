@@ -15,7 +15,7 @@ cd "$ROOT"
 
 SRC=src/de/fricke/pzstory
 LUA=mod/42/media/lua/client/PZStory/PZStoryBook.lua
-JAR=mod/42/media/java/PZStory.jar
+JAR="${JAR_PATH:-mod/42/media/java/PZStory.jar}"
 fail=0
 say()  { printf '  %-46s %s\n' "$1" "$2"; }
 bad()  { say "$1" "FAIL - $2"; fail=1; }
@@ -66,6 +66,21 @@ else
         | grep -vE '^de/fricke/pzstory/[A-Za-z0-9$]+\.class$' || true)
     if [ -z "$UNEXPECTED" ]; then good "jar contains only project classes" "$(unzip -Z1 "$JAR" | grep -c '\.class$') classes"
     else bad "jar contains only project classes" "unexpected: $(echo "$UNEXPECTED" | tr '\n' ' ')"; fi
+
+    # A path that merely looks like one of ours is not sufficient: every
+    # top-level or nested class in the binary must have a corresponding source
+    # file in this checkout. Exact byte-for-byte source equivalence is checked
+    # by rebuild-and-compare.sh on machines that have the proprietary game
+    # compile dependencies.
+    UNBACKED=""
+    while IFS= read -r class; do
+        top="${class%%\$*}.java"
+        if [ ! -f "$SRC/$top" ]; then
+            UNBACKED="${UNBACKED}${class} "
+        fi
+    done < <(unzip -Z1 "$JAR" | sed -n 's#^de/fricke/pzstory/\([^/]*\)\.class$#\1#p')
+    if [ -z "$UNBACKED" ]; then good "every jar class is source-backed" "clean"
+    else bad "every jar class is source-backed" "missing source for: $UNBACKED"; fi
 
     if unzip -t "$JAR" >/dev/null 2>&1; then good "jar integrity" "zip ok"
     else bad "jar integrity" "corrupt archive"; fi
