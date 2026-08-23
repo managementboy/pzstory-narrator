@@ -1,6 +1,7 @@
 package de.fricke.pzstory;
 
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -33,6 +34,12 @@ import zombie.vehicles.BaseVehicle;
  * crash mid-keypress is not.
  */
 public final class StateReader {
+
+    private static final int MAX_INVENTORY_ITEMS = 1000;
+    private static final int MAX_INVENTORY_BAGS = 64;
+    private static final int MAX_INVENTORY_LABELS = 256;
+    private static final int MAX_LITERATURE = 200;
+    private static final int MAX_ITEM_NAME_CHARS = 160;
 
     private StateReader() {}
 
@@ -777,8 +784,11 @@ public final class StateReader {
             Map<String, int[]> held = new LinkedHashMap<>();
             ArrayList<Bag> bags = new ArrayList<>();
             ArrayList<String> readable = new ArrayList<>();
+            InventoryBudget budget = new InventoryBudget();
+            budget.enter(inv);
 
             for (InventoryItem it : inv.getItems()) {
+                if (!budget.takeItem()) break;
                 if (it == null) continue;
                 String name = displayName(it);
 
@@ -796,16 +806,18 @@ public final class StateReader {
                     // Kept OUT of the name: Delta diffs these strings, and
                     // renaming a bag when it is strapped on would report the
                     // old one lost and a new one gained.
-                    Bag b = new Bag(name);
-                    try {
-                        if (it.isEquipped() || p.isEquipped(it)) b.worn = "worn";
-                        String at = it.getAttachedSlotType();
-                        if (at != null && !at.isBlank()) b.worn = at;
-                    } catch (Throwable ignored) { }
-                    collect(ic.getInventory(), b.contents, readable, 1);
-                    // Empty bags count. An empty bag is still a bag, and "he
-                    // has a bag and nothing to put in it" is a scene.
-                    bags.add(b);
+                    if (bags.size() < MAX_INVENTORY_BAGS) {
+                        Bag b = new Bag(name);
+                        try {
+                            if (it.isEquipped() || p.isEquipped(it)) b.worn = "worn";
+                            String at = it.getAttachedSlotType();
+                            if (at != null && !at.isBlank()) b.worn = boundedLabel(at);
+                        } catch (Throwable ignored) { }
+                        collect(ic.getInventory(), b.contents, readable, budget, 1);
+                        // Empty bags count. An empty bag is still a bag, and "he
+                        // has a bag and nothing to put in it" is a scene.
+                        bags.add(b);
+                    }
                 }
                 collectLiterature(it, readable);
             }
@@ -837,6 +849,11 @@ public final class StateReader {
                 for (String s : readable) j.val(s);
                 j.endArr();
             }
+            if (budget.truncated) {
+                j.put("inventoryTruncated",
+                        "Inventory was unusually large; only the first "
+                                + MAX_INVENTORY_ITEMS + " items were described.");
+            }
         } catch (Throwable t) {
             note("inventory", t);
         }
@@ -850,16 +867,42 @@ public final class StateReader {
         Bag(String name) { this.name = name; }
     }
 
-    /** Recurses into nested containers; depth-limited so a cycle cannot hang the read. */
+    /**
+     * A single budget shared by the root inventory and every nested bag.
+     * Identity comparison is deliberate: modded containers can expose the
+     * same ItemContainer through more than one item, or even form a cycle.
+     */
+    private static final class InventoryBudget {
+        int remaining = MAX_INVENTORY_ITEMS;
+        boolean truncated;
+        final IdentityHashMap<ItemContainer, Boolean> visited = new IdentityHashMap<>();
+
+        boolean enter(ItemContainer c) {
+            return c != null && visited.put(c, Boolean.TRUE) == null;
+        }
+
+        boolean takeItem() {
+            if (remaining <= 0) {
+                truncated = true;
+                return false;
+            }
+            remaining--;
+            return true;
+        }
+    }
+
+    /** Recurses into nested containers under one global count and cycle budget. */
     private static void collect(ItemContainer c, Map<String, int[]> into,
-                                ArrayList<String> readable, int depth) {
-        if (c == null || depth > 3) return;
+                                ArrayList<String> readable, InventoryBudget budget,
+                                int depth) {
+        if (c == null || depth > 3 || !budget.enter(c)) return;
         for (InventoryItem it : c.getItems()) {
+            if (!budget.takeItem()) break;
             if (it == null) continue;
             bump(into, displayName(it));
             collectLiterature(it, readable);
             if (it instanceof zombie.inventory.types.InventoryContainer ic) {
-                collect(ic.getInventory(), into, readable, depth + 1);
+                collect(ic.getInventory(), into, readable, budget, depth + 1);
             }
         }
     }
@@ -867,19 +910,36 @@ public final class StateReader {
     private static void collectLiterature(InventoryItem it, ArrayList<String> readable) {
         // Carried is not read. The narrator must be able to tell the
         // difference, so the flag ships with the title.
-        if (it instanceof Literature lit) {
+        if (it instanceof Literature lit && readable.size() < MAX_LITERATURE) {
             readable.add(displayName(it) + (lit.alreadyRead ? " [read]" : " [unread]"));
         }
     }
 
     private static String displayName(InventoryItem it) {
         String name = it.getName();
-        return (name == null || name.isEmpty()) ? it.getFullType() : name;
+        if (name == null || name.isEmpty()) name = it.getFullType();
+        return boundedLabel(name);
+    }
+
+    private static String boundedLabel(String value) {
+        if (value == null) return "unknown item";
+        StringBuilder clean = new StringBuilder(Math.min(value.length(), MAX_ITEM_NAME_CHARS));
+        for (int i = 0; i < value.length() && clean.length() < MAX_ITEM_NAME_CHARS; i++) {
+            char c = value.charAt(i);
+            clean.append(Character.isISOControl(c) ? ' ' : c);
+        }
+        String result = clean.toString().trim();
+        return result.isEmpty() ? "unknown item" : result;
     }
 
     /** Counts duplicates: six keys means six doors she can lock behind her. */
     private static void bump(Map<String, int[]> m, String name) {
-        m.computeIfAbsent(name, k -> new int[1])[0]++;
+        int[] count = m.get(name);
+        if (count != null) {
+            count[0]++;
+        } else if (m.size() < MAX_INVENTORY_LABELS) {
+            m.put(name, new int[] { 1 });
+        }
     }
 
     private static String withCount(String name, int n) {

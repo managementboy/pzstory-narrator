@@ -26,6 +26,10 @@ public final class Campaign {
 
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
+    private static final int MAX_CANON = 2000;
+    private static final int MAX_SEEN = 400;
+    private static final int MAX_DIRECTIONS = 20;
+    private static final int MAX_STANDING = 20;
 
     /** One written page. */
     public static final class Page {
@@ -197,6 +201,10 @@ public final class Campaign {
             SCENARIO = nextScenario;
             PREMISE = nextPremise;
             LAST_STATE = nextLastState;
+            trimOldest(CANON, MAX_CANON);
+            trimOldest(SEEN, MAX_SEEN);
+            trimOldest(DIRECTIONS, MAX_DIRECTIONS);
+            trimOldest(STANDING, MAX_STANDING);
             loaded = true;
             persistenceBlocked = false;
             Config.log("campaign: loaded " + PAGES.size() + " page(s), "
@@ -265,6 +273,14 @@ public final class Campaign {
             out.add(text);
         }
         return out;
+    }
+
+    private static void trimOldest(java.util.Collection<?> values, int limit) {
+        while (values.size() > limit) {
+            java.util.Iterator<?> iterator = values.iterator();
+            iterator.next();
+            iterator.remove();
+        }
     }
 
     private static synchronized boolean save() {
@@ -367,7 +383,13 @@ public final class Campaign {
             String s = e.trim();
             // A canon file is where an invented door would quietly become
             // permanent, so keep entries short and drop anything empty.
-            if (s.length() > 2 && s.length() <= 300) CANON.add(s);
+            if (s.length() > 2 && s.length() <= 300 && !CANON.contains(s)) {
+                if (CANON.size() >= MAX_CANON) {
+                    java.util.Iterator<String> oldest = CANON.iterator();
+                    if (oldest.hasNext()) { oldest.next(); oldest.remove(); }
+                }
+                CANON.add(s);
+            }
         }
         return CANON.size() != before;
     }
@@ -508,12 +530,20 @@ public final class Campaign {
     public static synchronized void sawRoom(String room, String building) {
         if (room == null || room.isBlank()) return;
         load();
-        String key = building == null || building.isBlank()
-                ? room.trim()
-                : room.trim() + " (" + building.trim() + ")";
-        // Bounded: a long campaign should not grow this without limit.
-        if (SEEN.size() > 400) return;
+        String roomName = bounded(room.trim(), 192);
+        String buildingName = building == null ? "" : bounded(building.trim(), 48);
+        String key = buildingName.isBlank()
+                ? roomName
+                : roomName + " (" + buildingName + ")";
+        if (!SEEN.contains(key) && SEEN.size() >= MAX_SEEN) {
+            java.util.Iterator<String> oldest = SEEN.iterator();
+            if (oldest.hasNext()) { oldest.next(); oldest.remove(); }
+        }
         if (SEEN.add(key)) save();
+    }
+
+    private static String bounded(String text, int maxChars) {
+        return text.length() <= maxChars ? text : text.substring(0, maxChars);
     }
 
     public static synchronized String seenForPrompt() {
@@ -800,11 +830,17 @@ public final class Campaign {
                 return "kept as canon";
             }
             case "direction" -> {
+                if (DIRECTIONS.size() >= MAX_DIRECTIONS) {
+                    return "too many NEXT notes - use or remove one first";
+                }
                 DIRECTIONS.add(s);
                 save();
                 return "will steer the next page";
             }
             case "standing" -> {
+                if (!STANDING.contains(s) && STANDING.size() >= MAX_STANDING) {
+                    return "too many ALWAYS notes - remove one first";
+                }
                 STANDING.add(s);
                 save();
                 return "in force until you remove it";
