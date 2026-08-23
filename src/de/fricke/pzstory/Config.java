@@ -1,6 +1,5 @@
 package de.fricke.pzstory;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,6 +21,9 @@ import zombie.ZomboidFileSystem;
  * message the mod prints, so console.txt stays safe to paste into a bug report.
  */
 public final class Config {
+
+    private static final int MAX_PROFILES_BYTES = 1024 * 1024;
+    private static final int MAX_PROFILES = 64;
 
     /** Bounds a configured number. Every numeric setting goes through this. */
     private static int clamp(int v, int lo, int hi) {
@@ -73,6 +75,14 @@ public final class Config {
             // default would miss between most of them. Cache writes cost 2x,
             // reads are a fraction of base - so a hit pays for several misses.
             this.cacheTtl = JsonParse.str(m, "cacheTtl", "1h");
+
+            requireLength("profile name", name, 1, 64);
+            requireOneOf("kind", kind, "anthropic", "openai-compatible", "gemini");
+            requireLength("model", model, 1, 256);
+            requireLength("apiKey", apiKey, 0, 4096);
+            if (baseUrl != null) requireLength("baseUrl", baseUrl, 1, Endpoint.MAX_URL_CHARS);
+            requireOneOf("systemMode", systemMode, "native", "prepend_to_user", "both");
+            requireOneOf("cacheTtl", cacheTtl, "1h", "5m", "off");
         }
 
         /** True when this profile could actually be used for a call. */
@@ -99,6 +109,19 @@ public final class Config {
 
     private Config() {}
 
+    private static void requireLength(String field, String value, int min, int max) {
+        int n = value == null ? 0 : value.length();
+        if (n < min || n > max) {
+            throw new IllegalArgumentException(field + " length " + n
+                    + " is outside " + min + ".." + max);
+        }
+    }
+
+    private static void requireOneOf(String field, String value, String... allowed) {
+        for (String candidate : allowed) if (candidate.equals(value)) return;
+        throw new IllegalArgumentException("unsupported " + field + " value");
+    }
+
     public static Path file() {
         if (path == null) {
             String base;
@@ -119,49 +142,57 @@ public final class Config {
      * @return a human-readable status line, never null, never containing a key.
      */
     public static synchronized String reload() {
-        PROFILES.clear();
-        activeName = null;
-        loadError = null;
-
         Path p = file();
         if (!Files.isRegularFile(p)) {
             loadError = "not found: " + p;
-            return "PZStory: no profiles.json at " + p;
+            return "PZStory: no profiles.json at " + p
+                    + (PROFILES.isEmpty() ? "" : " - keeping the last valid configuration");
         }
         try {
-            String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+            String text = BoundedFiles.readUtf8(p, MAX_PROFILES_BYTES);
             Map<String, Object> root = JsonParse.parseObject(text);
-            activeName = JsonParse.str(root, "activeProfile", null);
+            String nextActive = JsonParse.str(root, "activeProfile", null);
+            Map<String, Profile> next = new LinkedHashMap<>();
 
             Map<String, Object> profs = JsonParse.map(root, "profiles");
             if (profs == null) {
-                loadError = "no \"profiles\" object";
-                return "PZStory: profiles.json has no \"profiles\" object";
+                throw new IllegalArgumentException("no \"profiles\" object");
+            }
+            if (profs.size() > MAX_PROFILES) {
+                throw new IllegalArgumentException("more than " + MAX_PROFILES + " profiles");
             }
             for (Map.Entry<String, Object> e : profs.entrySet()) {
                 if (e.getValue() instanceof Map<?, ?>) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> m = (Map<String, Object>) e.getValue();
-                    PROFILES.put(e.getKey(), new Profile(e.getKey(), m));
+                    next.put(e.getKey(), new Profile(e.getKey(), m));
                 }
             }
+            if (next.isEmpty()) throw new IllegalArgumentException("no valid profiles");
             // A profile chosen on the device beats the file's default, so
             // switching provider does not mean hand-editing JSON.
             String remembered = Settings.profile();
-            if (remembered != null && PROFILES.containsKey(remembered)) {
-                activeName = remembered;
+            if (remembered != null && next.containsKey(remembered)) {
+                nextActive = remembered;
             }
-            if (activeName == null && !PROFILES.isEmpty()) {
-                activeName = PROFILES.keySet().iterator().next();
+            if (nextActive == null || !next.containsKey(nextActive)) {
+                nextActive = next.keySet().iterator().next();
             }
-            Profile a = active();
+
+            // Publish only after the entire document and every profile passed.
+            PROFILES.clear();
+            PROFILES.putAll(next);
+            activeName = nextActive;
+            loadError = null;
+            Profile a = PROFILES.get(activeName);
             return "PZStory: loaded " + PROFILES.size() + " profile(s), active="
                     + activeName + (a == null ? " (MISSING)" : a.usable() ? " (ready)" : " (not usable)");
         } catch (Throwable t) {
             // A parse error is the single most likely thing to go wrong for a
             // player editing JSON by hand, so say exactly what and where.
             loadError = t.getClass().getSimpleName() + ": " + t.getMessage();
-            return "PZStory: could not read profiles.json - " + loadError;
+            return "PZStory: could not read profiles.json - " + loadError
+                    + (PROFILES.isEmpty() ? "" : " - keeping the last valid configuration");
         }
     }
 

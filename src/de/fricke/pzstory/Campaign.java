@@ -26,6 +26,9 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
+    private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_PAGES_ON_DISK = 5000;
+
     /** One written page. */
     public static final class Page {
         public final int number;
@@ -55,6 +58,8 @@ public final class Campaign {
     private static final LinkedHashSet<String> STANDING = new LinkedHashSet<>();
 
     private static boolean loaded = false;
+    /** True only when a corrupt store could not be backed up safely. */
+    private static boolean persistenceBlocked = false;
 
     /**
      * Which campaign this is, counting from process start.
@@ -116,87 +121,159 @@ public final class Campaign {
         ACHIEVED.clear();
         DECLINED.clear();
         loaded = false;
+        persistenceBlocked = false;
     }
 
     // ------------------------------------------------------------------ load
 
     public static synchronized void load() {
         if (loaded) return;
-        loaded = true;
+        Path p = root().resolve("campaign.json");
         try {
-            Path p = root().resolve("campaign.json");
             if (!Files.isRegularFile(p)) {
+                loaded = true;
                 Config.log("campaign: new book at " + root());
                 return;
             }
             Map<String, Object> m = JsonParse.parseObject(
-                    new String(Files.readAllBytes(p), StandardCharsets.UTF_8));
+                    BoundedFiles.readUtf8(p, MAX_CAMPAIGN_BYTES));
 
-            Object canon = m.get("canon");
-            if (canon instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s) CANON.add(s);
-            }
-            OPENING = JsonParse.str(m, "opening", "");
+            LinkedHashSet<String> nextCanon = new LinkedHashSet<>(
+                    stringList(m.get("canon"), "canon", 10000, 300));
+            String nextOpening = field(m, "opening", 32000);
             // Self-heal a campaign opened by 1.15.0/1.15.1, where the trait
             // list had become objects but the opening builder still called
             // String.valueOf() on them and wrote "He is {name=keen cook,
             // kind=..., means=...}" into a field that is FIXED for the life of
             // the book and re-read on every single page. Clearing it makes the
             // next page rebuild it correctly from the same character.
-            if (OPENING.contains("{name=") || OPENING.contains("{name =")) {
+            if (nextOpening.contains("{name=") || nextOpening.contains("{name =")) {
                 Config.log("campaign: opening was written by a broken build "
                         + "- clearing it so the next page rewrites it");
-                OPENING = "";
+                nextOpening = "";
             }
-            SCENARIO = JsonParse.str(m, "scenario", "");
-            PREMISE  = JsonParse.str(m, "premise", "");
-            LAST_STATE = JsonParse.str(m, "lastState", "");
-            Object td = m.get("todo");
-            if (td instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s3) TODO.add(s3);
-            }
-            Object ac = m.get("achieved");
-            if (ac instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s4) ACHIEVED.add(s4);
-            }
-            Object dc = m.get("declined");
-            if (dc instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s5) DECLINED.add(s5);
-            }
-            Object seen = m.get("seen");
-            if (seen instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s2) SEEN.add(s2);
-            }
-            Object dir = m.get("directions");
-            if (dir instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s) DIRECTIONS.add(s);
-            }
-            Object st = m.get("standing");
-            if (st instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s) STANDING.add(s);
-            }
+            String nextScenario = field(m, "scenario", 64);
+            String nextPremise = field(m, "premise", 32000);
+            String nextLastState = field(m, "lastState", 4 * 1024 * 1024);
+            List<String> nextTodo = stringList(m.get("todo"), "todo", 100, 512);
+            List<String> nextAchieved = stringList(
+                    m.get("achieved"), "achieved", 100, 512);
+            List<String> nextDeclined = stringList(
+                    m.get("declined"), "declined", 100, 512);
+            LinkedHashSet<String> nextSeen = new LinkedHashSet<>(
+                    stringList(m.get("seen"), "seen", 1000, 512));
+            List<String> nextDirections = stringList(
+                    m.get("directions"), "directions", 100, 500);
+            LinkedHashSet<String> nextStanding = new LinkedHashSet<>(
+                    stringList(m.get("standing"), "standing", 100, 500));
+
+            List<Page> nextPages = new ArrayList<>();
             Object pages = m.get("pages");
             if (pages instanceof List<?> l) {
+                if (l.size() > MAX_PAGES_ON_DISK) {
+                    throw new IllegalStateException("pages has more than "
+                            + MAX_PAGES_ON_DISK + " entries");
+                }
                 for (Object o : l) {
-                    if (o instanceof Map<?, ?>) {
-                        PAGES.add(new Page(
-                                JsonParse.num(o, "n", PAGES.size() + 1),
-                                JsonParse.str(o, "title", ""),
-                                JsonParse.str(o, "text", ""),
-                                JsonParse.str(o, "stamp", "")));
+                    if (!(o instanceof Map<?, ?>)) {
+                        throw new IllegalStateException("pages contains a non-object entry");
                     }
+                    nextPages.add(new Page(
+                            JsonParse.num(o, "n", nextPages.size() + 1),
+                            field(o, "title", 512),
+                            field(o, "text", 128 * 1024),
+                            field(o, "stamp", 128)));
                 }
             }
+
+            // Publish only after every field and collection passed validation.
+            PAGES.clear(); PAGES.addAll(nextPages);
+            CANON.clear(); CANON.addAll(nextCanon);
+            DIRECTIONS.clear(); DIRECTIONS.addAll(nextDirections);
+            STANDING.clear(); STANDING.addAll(nextStanding);
+            SEEN.clear(); SEEN.addAll(nextSeen);
+            TODO.clear(); TODO.addAll(nextTodo);
+            ACHIEVED.clear(); ACHIEVED.addAll(nextAchieved);
+            DECLINED.clear(); DECLINED.addAll(nextDeclined);
+            OPENING = nextOpening;
+            SCENARIO = nextScenario;
+            PREMISE = nextPremise;
+            LAST_STATE = nextLastState;
+            loaded = true;
+            persistenceBlocked = false;
             Config.log("campaign: loaded " + PAGES.size() + " page(s), "
                     + CANON.size() + " canon entries from " + root());
         } catch (Throwable t) {
-            // A corrupt store must not stop the mod. Better a fresh book than
-            // no book, and the old file stays on disk to be recovered by hand.
-            Config.log("campaign: could not read the store (" + t + ") - starting fresh");
+            clearLoadedData();
+            loaded = true;
+            Path backup = p.resolveSibling(
+                    "campaign.json.corrupt-" + System.currentTimeMillis());
+            try {
+                Files.copy(p, backup);
+                Config.log("campaign: preserved unreadable store as " + backup);
+            } catch (Throwable copyFailure) {
+                // Do not overwrite the only remaining copy on the next save.
+                persistenceBlocked = true;
+                Config.log("campaign: could not preserve unreadable store ("
+                        + copyFailure + "); persistence is blocked for this session");
+            }
+            Config.log("campaign: could not read the store (" + t
+                    + ") - starting fresh in memory");
         }
     }
 
+    private static void clearLoadedData() {
+        PAGES.clear();
+        CANON.clear();
+        DIRECTIONS.clear();
+        STANDING.clear();
+        SEEN.clear();
+        TODO.clear();
+        ACHIEVED.clear();
+        DECLINED.clear();
+        OPENING = "";
+        SCENARIO = "";
+        PREMISE = "";
+        LAST_STATE = "";
+    }
+
+    private static String field(Object object, String key, int maxChars) {
+        String value = JsonParse.str(object, key, "");
+        if (value.length() > maxChars) {
+            throw new IllegalStateException(key + " exceeds " + maxChars + " characters");
+        }
+        return value;
+    }
+
+    private static List<String> stringList(
+            Object value, String field, int maxEntries, int maxChars) {
+        List<String> out = new ArrayList<>();
+        if (value == null) return out;
+        if (!(value instanceof List<?> list)) {
+            throw new IllegalStateException(field + " is not an array");
+        }
+        if (list.size() > maxEntries) {
+            throw new IllegalStateException(field + " has more than "
+                    + maxEntries + " entries");
+        }
+        for (Object entry : list) {
+            if (!(entry instanceof String text)) {
+                throw new IllegalStateException(field + " contains a non-string entry");
+            }
+            if (text.length() > maxChars) {
+                throw new IllegalStateException(field + " entry exceeds "
+                        + maxChars + " characters");
+            }
+            out.add(text);
+        }
+        return out;
+    }
+
     private static synchronized void save() {
+        if (persistenceBlocked) {
+            Config.log("campaign: SAVE REFUSED - unreadable store was not preserved");
+            return;
+        }
         try {
             Files.createDirectories(root());
             Json j = new Json().obj();
