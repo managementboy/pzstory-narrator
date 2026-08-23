@@ -67,7 +67,7 @@ local BRAND = "Premium Tech."
 -- reloads when Project Zomboid itself restarts. During development the two
 -- WILL get out of step, and an unguarded call then throws on every tick and
 -- buries the log. Check once, say so plainly, and refuse to go on.
-local NEEDS_JAVA = "1.23.0"
+local NEEDS_JAVA = "1.23.1"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
