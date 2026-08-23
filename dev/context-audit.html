@@ -1,0 +1,869 @@
+<title>The Narrator's Blind Spots</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+
+<style>
+:root {
+  --ground:      #EFF1F3;
+  --surface:     #FFFFFF;
+  --surface-2:   #E6E9ED;
+  --rule:        #D3D7DD;
+  --rule-strong: #B4BAC3;
+  --ink:         #1B1D21;
+  --ink-mid:     #4A4F58;
+  --ink-soft:    #757A83;
+  --accent:      #9A5F0E;
+  --accent-soft: #F2E4CE;
+  --crit:        #9E3229;
+  --crit-soft:   #F5DEDB;
+  --warn:        #9A5F0E;
+  --warn-soft:   #F2E4CE;
+  --ok:          #3D6B52;
+  --ok-soft:     #DCEADF;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --disp: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #17191C;
+    --surface:     #1F2226;
+    --surface-2:   #292C32;
+    --rule:        #33373D;
+    --rule-strong: #474C54;
+    --ink:         #E5E7EA;
+    --ink-mid:     #A7ADB6;
+    --ink-soft:    #7E848D;
+    --accent:      #D99A47;
+    --accent-soft: #38301F;
+    --crit:        #D97B6E;
+    --crit-soft:   #3A2523;
+    --warn:        #D99A47;
+    --warn-soft:   #38301F;
+    --ok:          #7FB394;
+    --ok-soft:     #22302A;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:      #17191C;
+  --surface:     #1F2226;
+  --surface-2:   #292C32;
+  --rule:        #33373D;
+  --rule-strong: #474C54;
+  --ink:         #E5E7EA;
+  --ink-mid:     #A7ADB6;
+  --ink-soft:    #7E848D;
+  --accent:      #D99A47;
+  --accent-soft: #38301F;
+  --crit:        #D97B6E;
+  --crit-soft:   #3A2523;
+  --warn:        #D99A47;
+  --warn-soft:   #38301F;
+  --ok:          #7FB394;
+  --ok-soft:     #22302A;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.62;
+  margin: 0;
+  padding: 0 20px 100px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 940px; margin: 0 auto; }
+
+/* ---------------------------------------------------------- masthead */
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 56px 0 30px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+.eyebrow b { color: var(--accent); font-weight: 600; }
+
+h1 {
+  font-family: var(--disp);
+  font-weight: 700;
+  font-size: clamp(2.3rem, 6.5vw, 3.9rem);
+  line-height: 1.02;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  margin: 0;
+}
+
+.standfirst {
+  font-size: 1.16rem;
+  line-height: 1.55;
+  color: var(--ink-mid);
+  max-width: 60ch;
+  margin: 0;
+}
+
+.provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.provenance span {
+  border: 1px solid var(--rule-strong);
+  padding: 5px 9px;
+  color: var(--ink-mid);
+  background: var(--surface);
+}
+.provenance span b { color: var(--ink); font-weight: 600; }
+
+/* ---------------------------------------------------------- headings */
+
+h2 {
+  font-family: var(--disp);
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 0;
+}
+
+h3 {
+  font-family: var(--disp);
+  font-weight: 600;
+  font-size: 1.42rem;
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+  margin: 0;
+}
+
+section { padding: 46px 0 0; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 26px;
+}
+.section-head .n {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+}
+
+p { margin: 0 0 1em; max-width: 68ch; }
+p:last-child { margin-bottom: 0; }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+code, .api {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+strong { font-weight: 600; }
+
+/* ---------------------------------------------------------- scoreboard */
+
+.scoreboard {
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  overflow-x: auto;
+}
+table { border-collapse: collapse; width: 100%; min-width: 620px; }
+thead th {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-soft);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule-strong);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+tbody td {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.ref {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  padding-top: 16px;
+}
+td.topic { font-family: var(--disp); font-weight: 600; font-size: 0.95rem; line-height: 1.3; }
+td.gap { color: var(--ink-mid); }
+
+.grade {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  white-space: nowrap;
+  border: 1px solid;
+}
+.g-ok   { color: var(--ok);   border-color: var(--ok);   background: var(--ok-soft); }
+.g-part { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.g-thin { color: var(--crit); border-color: var(--crit); background: var(--crit-soft); }
+
+/* ---------------------------------------------------------- findings */
+
+.finding {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--rule-strong);
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.finding.sev-1 { border-left-color: var(--crit); }
+.finding.sev-2 { border-left-color: var(--warn); }
+.finding.sev-3 { border-left-color: var(--rule-strong); }
+
+.finding-head { display: flex; flex-direction: column; gap: 8px; }
+
+.tagrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.tag.sev { border-color: currentColor; font-weight: 600; }
+.sev-1 .tag.sev { color: var(--crit); background: var(--crit-soft); }
+.sev-2 .tag.sev { color: var(--warn); background: var(--warn-soft); }
+.sev-3 .tag.sev { color: var(--ink-soft); }
+.tag.evi { color: var(--ink-mid); background: var(--surface-2); border-color: var(--surface-2); }
+.tag.done { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); font-weight: 600; }
+.tag.open { color: var(--ink-soft); border-color: var(--rule-strong); font-weight: 600; }
+
+.finding.closed { border-left-color: var(--ok); }
+.finding.closed h3 { color: var(--ink-mid); }
+.finding.closed .tag.sev { display: none; }
+
+.banner {
+  border: 1px solid var(--ok);
+  border-left: 4px solid var(--ok);
+  background: var(--ok-soft);
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 26px;
+}
+.banner h2 { color: var(--ok); }
+.banner p { color: var(--ink); max-width: 70ch; }
+.banner .shipped {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mid);
+}
+
+.stack { display: flex; flex-direction: column; gap: 30px; }
+.stack-tight { display: flex; flex-direction: column; gap: 18px; }
+
+/* told / missing pair */
+
+.ledger { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+@media (min-width: 720px) { .ledger { grid-template-columns: 1fr 1fr; } }
+
+.ledger > div { background: var(--surface); padding: 16px 18px; }
+.ledger h4 {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0 0 10px;
+  color: var(--ink-soft);
+}
+.ledger .has h4 { color: var(--ok); }
+.ledger .lacks h4 { color: var(--crit); }
+.ledger ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 7px; }
+.ledger li { font-size: 0.93rem; line-height: 1.45; color: var(--ink-mid); }
+.ledger li b { color: var(--ink); font-weight: 600; }
+
+/* pull quote from the prompt itself */
+
+.excerpt {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  background: var(--surface-2);
+  border-left: 3px solid var(--rule-strong);
+  padding: 13px 16px;
+  color: var(--ink-mid);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.excerpt em { color: var(--ink); font-style: normal; font-weight: 600; }
+
+.note {
+  font-size: 0.93rem;
+  color: var(--ink-mid);
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+  max-width: none;
+}
+.note b { color: var(--ink); }
+
+/* ---------------------------------------------------------- work order */
+
+ol.order { counter-reset: step; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+ol.order li {
+  counter-increment: step;
+  background: var(--surface);
+  padding: 15px 18px 15px 54px;
+  position: relative;
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+ol.order li::before {
+  content: counter(step, decimal-leading-zero);
+  position: absolute;
+  left: 18px;
+  top: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+ol.order li b { font-family: var(--disp); font-weight: 600; }
+ol.order li span { color: var(--ink-soft); font-family: var(--mono); font-size: 11px; display: block; margin-top: 4px; letter-spacing: 0.03em; }
+
+footer {
+  margin-top: 56px;
+  padding-top: 20px;
+  border-top: 2px solid var(--ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">
+    <span>PZStory context audit</span>
+    <span>Audited at <b>1.14.0</b></span><span>Fixed in <b>1.15.0</b></span>
+    <span>Against PZ <b>42.20.3</b></span>
+    <span>23 Aug 2026</span>
+  </div>
+  <h1>The Narrator's Blind Spots</h1>
+  <p class="standfirst">Eight subjects, checked line by line against what actually reaches the model. The charter is in good shape. The world knowledge behind it is thinner than it looks, and three of the eight subjects are not in the prompt at all.</p>
+  <div class="provenance">
+    <span>Evidence: <b>javap</b> on projectzomboid.jar</span>
+    <span><b>RadioData.xml</b> extraction</span>
+    <span><b>Apocalypse.lua</b> defaults</span>
+    <span><b>media/maps</b> survey</span>
+    <span>Full read of <b>13 source files</b></span>
+  </div>
+</header>
+
+<section>
+  <div class="section-head"><h2>Verdict</h2><span class="n">eight subjects</span></div>
+
+  <p>Every claim below was checked against the game's own files rather than recalled. Where I say an API exists, I ran <code>javap</code> against the jar the game actually ships; where I quote a schedule, I parsed it out of the XML on your disk.</p>
+
+  <div class="scoreboard">
+    <table>
+      <thead>
+        <tr><th>§</th><th>Subject</th><th>Coverage</th><th>The headline gap</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="ref">1</td>
+          <td class="topic">Premise, setting &amp; tone</td>
+          <td><span class="grade g-part">Partial</span></td>
+          <td class="gap">"This is how you died" is nowhere in the prompt. The start date is hardcoded but is a sandbox option.</td>
+        </tr>
+        <tr>
+          <td class="ref">2</td>
+          <td class="topic">Map geography &amp; hubs</td>
+          <td><span class="grade g-part">Partial</span></td>
+          <td class="gap">Five of B42's eleven settlements are unnamed, and <code>placeName</code> almost never fires.</td>
+        </tr>
+        <tr>
+          <td class="ref">3</td>
+          <td class="topic">Physiology &amp; trauma</td>
+          <td><span class="grade g-ok">Strong</span></td>
+          <td class="gap">Moodles — the game's own 26-way judgement of what is worth noticing — are not read at all.</td>
+        </tr>
+        <tr>
+          <td class="ref">4</td>
+          <td class="topic">Character build</td>
+          <td><span class="grade g-part">Partial</span></td>
+          <td class="gap">Traits arrive as bare names. No polarity, no description, no idea which are virtues.</td>
+        </tr>
+        <tr>
+          <td class="ref">5</td>
+          <td class="topic">Skills &amp; learning</td>
+          <td><span class="grade g-thin">Thin</span></td>
+          <td class="gap">Book multipliers invisible; the Life and Living teaching window closes on day 8 and nothing says so.</td>
+        </tr>
+        <tr>
+          <td class="ref">6</td>
+          <td class="topic">Degradation &amp; infrastructure</td>
+          <td><span class="grade g-thin">Thin</span></td>
+          <td class="gap">Live power and water state are one method call away and unread. Erosion is invisible.</td>
+        </tr>
+        <tr>
+          <td class="ref">7</td>
+          <td class="topic">Meta-events &amp; helicopter</td>
+          <td><span class="grade g-thin">Absent</span></td>
+          <td class="gap">The game's only scheduled set piece is not mentioned once. Rule 1 makes it unwritable.</td>
+        </tr>
+        <tr>
+          <td class="ref">8</td>
+          <td class="topic">Engine &amp; sandbox</td>
+          <td><span class="grade g-part">Partial</span></td>
+          <td class="gap">We read 11 of 181 sandbox options. Roughly a dozen of the rest change what is true.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:22px">Three cross-cutting defects turned up that are not on the checklist at all — one of them sends the entire campaign spine twice on every request. They are at the bottom.</p>
+
+  <div class="banner">
+    <h2>What has since been fixed</h2>
+    <p><b>Build 1.15.0 closes twelve of the findings below</b>, including every Priority 1 except one. Each closed finding is marked <span class="tag done" style="display:inline-block">Fixed in 1.15.0</span> where it appears, and the work order at the end shows what is left.</p>
+    <p class="shipped">Still open: region names from regions.lua &middot; glass, stitches and the source of a scratch &middot; live erosion &middot; the game build in the snapshot.</p>
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Premise, setting &amp; tone</h2><span class="n">§1</span></div>
+
+  <div class="ledger">
+    <div class="has">
+      <h4>In the prompt</h4>
+      <ul>
+        <li>Charter opens on <b>Knox County, Kentucky, July 1993, the first weeks of the Knox Event</b>.</li>
+        <li>The quarantine in full: third day of the exclusion, telephones dead a week, <b>General John McGrew</b>'s noon statement on 9 July, the official "non-lethal" line nobody inside believes.</li>
+        <li>The 1993 texture — no mobiles, no internet, a television is furniture.</li>
+        <li>A strong instruction that the gap between the broadcast and the street <em>is</em> the tone.</li>
+      </ul>
+    </div>
+    <div class="lacks">
+      <h4>Not in the prompt</h4>
+      <ul>
+        <li><b>The thesis.</b> "This is how you died" — the game's own one-line premise — appears nowhere.</li>
+        <li><b>A start date that can move.</b> The calendar is asserted as fact and is actually a player setting.</li>
+        <li>Any reconciliation between the fixed 9 July timeline and how long the survivor has actually been alive.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="stack" style="margin-top:26px">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Tone</span><span class="tag evi">Source read</span></div>
+        <h3>The narrator does not know the story has one ending</h3>
+      </div>
+      <p>This is the largest omission in the audit and the cheapest to fix. Project Zomboid's entire authorial stance is one sentence, and the charter never says it. The narrator has been told it is writing a survival story; it has not been told it is writing a <em>tragedy</em> — a book whose last chapter is already written and whose only open question is how long the middle runs.</p>
+      <p>That single fact changes what a page is for. It is why a found tin of beans is poignant rather than a win, why a fixed door is worth a paragraph, why the last beat should be a want the reader suspects will not be granted. Without it the narrator defaults to the neutral register of adventure fiction, which is exactly the flatness that has been showing up in the pages.</p>
+      <div class="note"><b>Cost:</b> one paragraph in <code>Prompt.CHARTER</code>. <b>Care needed:</b> it must forbid foreshadowing <em>this particular</em> death and forbid promising rescue — the doom is a colour, not a plot. And because you have ruled out hardcoded cardinal rules, this belongs behind a <code>Settings</code> dropdown alongside the spoiler dial: <em>Inevitable / Ambiguous / Hopeful</em>, defaulting to Inevitable.</div>
+      <div class="note"><b>Done:</b> <code>Prompt.tone()</code> now ships a WHAT KIND OF BOOK THIS IS block in the cached system prefix, behind a new SETUP dial &mdash; <em>might be won / nobody knows / this is how you died</em>, defaulting to the last. All three variants forbid foreshadowing the actual death.</div>
+    </div>
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 2</span><span class="tag">Correctness</span><span class="tag evi">Apocalypse.lua</span><span class="tag evi">javap</span></div>
+        <h3>The prompt asserts a calendar the player can change</h3>
+      </div>
+      <p><code>World.KNOX</code> states flatly that <em>"the save's first day is 9 July 1993"</em> and builds the whole Knox Knews timeline on it. That is the Apocalypse default — I confirmed it in <code>media/lua/shared/Sandbox/Apocalypse.lua</code>: <code>StartYear&nbsp;=&nbsp;1, StartMonth&nbsp;=&nbsp;7, StartDay&nbsp;=&nbsp;9</code>. But it is a setting, not a law. <code>SandboxOptions</code> exposes <code>startYear</code>, <code>startMonth</code>, <code>startDay</code> and <code>startTime</code>, and a player who starts in October gets a system block asserting July and a state block reporting October.</p>
+      <p>That is a Rule 1 violation we manufactured ourselves — the one thing the charter says breaks the world irreparably, introduced by our own prompt rather than by the model.</p>
+      <div class="note"><b>Fix:</b> read the four start options in <code>StateReader.sandbox()</code>, and rewrite the KNOX timeline to be <em>relative</em> — "day N since the exclusion began" — computed from <code>GameTime.getWorldAgeDaysSinceBegin()</code>. This has a second payoff: the timeline currently goes stale after week one, because everything in it is dated absolutely and nothing tells the narrator how far past those dates the survivor now is.</div>
+      <div class="note"><b>Done:</b> Solved by removing the assertion rather than reading the option. <code>World.KNOX</code> is now dated from &ldquo;the first morning&rdquo;, the snapshot carries <code>time.daysSinceItBegan</code>, and the Knox Knews dates are explicitly flagged as printed on the papers and therefore fixed.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Map geography &amp; regional hubs</h2><span class="n">§2</span></div>
+
+  <div class="ledger">
+    <div class="has">
+      <h4>In the prompt</h4>
+      <ul>
+        <li>Seven places named: <b>Muldraugh, West Point, Rosewood, Riverside, March Ridge, Ekron, Louisville</b>.</li>
+        <li>The road scenario uses the same list as a route, with Louisville held back as the far end.</li>
+        <li>A firm NAMES rule: no town may be named unless the state supplies it.</li>
+      </ul>
+    </div>
+    <div class="lacks">
+      <h4>Not in the prompt</h4>
+      <ul>
+        <li><b>Brandenburg, Echo Creek, Fallas Lake, Irvington, Valley Station</b> — five real B42 settlements.</li>
+        <li>Any sense of direction, distance, or how the towns sit relative to each other.</li>
+        <li>In practice, any working place name at all — see below.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="stack" style="margin-top:26px">
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 2</span><span class="tag">Coverage</span><span class="tag evi">media/maps survey</span></div>
+        <h3>Five settlements exist that the narrator has never heard of</h3>
+      </div>
+      <p>Your install's <code>media/maps/</code> holds eleven map packs: Brandenburg, Echo Creek, Ekron, Fallas Lake, Irvington, March Ridge, Muldraugh, Riverside, Rosewood, Valley Station and West Point. The prompt names six of them. Irvington is a nice illustration of the cost — it appears in our Knox Knews entry for 2 July as the town where a woman survived a crash, so the narrator knows something happened there but does not know it is a place on the map the survivor could walk into.</p>
+      <div class="note"><b>Also checked, and it holds:</b> I went looking for Louisville because the road scenario stakes its ending on it and B42 was widely reported to have cut it. It is still there — <code>media/maps/Muldraugh, KY/regions.lua</code> carries live <code>Louisville</code> region rows (several others commented out). The spine is safe.</div>
+      <div class="note"><b>Done:</b> Brandenburg, Irvington, Echo Creek, Fallas Lake and Valley Station added to THE COUNTY.</div>
+    </div>
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag open">Still open</span><span class="tag sev">Priority 2</span><span class="tag">Dead feature</span><span class="tag evi">javap</span></div>
+        <h3><code>placeName</code> is a rule with almost nothing behind it</h3>
+      </div>
+      <p>The charter tells the narrator it may name a town only when <code>position.placeName</code> supplies one. That reads as a safe constraint. In practice it is close to a permanent gag, because <code>IsoMetaGrid.getZoneAt()</code> returns <em>zones</em> — Nav, Forest, TownZone, parking — whose <code>getName()</code> is usually empty or a bare type string. It almost never returns "Muldraugh".</p>
+      <p>The map's real settlement naming lives in <code>regions.lua</code> as named coordinate rectangles, and I checked for an engine accessor to reach it: <code>IsoMetaGrid</code>, <code>IsoMetaCell</code> and <code>IsoWorld</code> have none. <code>IsoWorld.getSpawnRegion()</code> is the only region-shaped call and it returns where the character <em>spawned</em>, not where they are standing.</p>
+      <div class="note"><b>Fix:</b> parse <code>regions.lua</code> into a static coordinate table at build time — roughly forty lines — and emit <code>position.region</code> beside the existing fields. Until then every page set in Muldraugh has to call it "the town", which is why the prose has felt placeless.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Physiological simulation &amp; trauma</h2><span class="n">§3</span></div>
+
+  <p>This is the strongest area in the audit, and the <code>World.RULES</code> block shipped in 1.14.0 closed most of what was open. Per-part reporting is genuinely good: only non-pristine parts are emitted, pain and stiffness are carried separately from health so a strain is visible, and bandage type and splints come through.</p>
+
+  <div class="ledger" style="margin-top:22px">
+    <div class="has">
+      <h4>In the prompt</h4>
+      <ul>
+        <li>All 24 <code>CharacterStat</code> values — hunger, thirst, fatigue, endurance, panic, stress, boredom and the rest.</li>
+        <li>Per-part: health, pain, stiffness, bitten, scratched, bleeding, stemmed, deep wound, burn, bandage type, splint.</li>
+        <li><code>infected</code> vs <code>fakeInfected</code>, with the excellent rule that <b>the survivor cannot tell the two apart</b> even though the state can.</li>
+        <li>Nutrition split from hunger, with an explicit warning not to dramatise calories.</li>
+        <li>Bite-vs-scratch, bandage hygiene, stitches, splints, pain outlasting health, sleep debt, food poisoning.</li>
+      </ul>
+    </div>
+    <div class="lacks">
+      <h4>Not in the prompt</h4>
+      <ul>
+        <li><b>Every moodle.</b> All 26 types, entirely unread.</li>
+        <li>Glass lodged in a wound, and whether a wound has been stitched.</li>
+        <li>Whether a scratch came from a window or a zombie — which is the whole question.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="stack" style="margin-top:26px">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Highest value / lowest cost</span><span class="tag evi">javap</span></div>
+        <h3>The game already decides what is worth noticing, and we throw it away</h3>
+      </div>
+      <p>A moodle is the game's own judgement that a raw number has crossed into being worth a person's attention — expressed in tiers, in the player's own vocabulary. We send the narrator <code>stress: 0.41</code> and make it invent a threshold. The game will simply tell us <em>"Stressed"</em>, level 2.</p>
+      <p>Confirmed reachable: <code>IsoGameCharacter.getMoodles()</code> returns a <code>Moodles</code> with <code>getMoodleLevel(MoodleType)</code>, <code>getMoodleDisplayString(MoodleType)</code> and <code>getMoodleDescriptionString(MoodleType)</code>. <code>MoodleType</code> registers 26 constants:</p>
+      <div class="excerpt">ENDURANCE   TIRED       HUNGRY      PANIC       SICK
+BORED       UNHAPPY     BLEEDING    <em>WET</em>         <em>HAS_A_COLD</em>
+<em>ANGRY</em>       STRESS      THIRST      INJURED     PAIN
+HEAVY_LOAD  <em>DRUNK</em>       DEAD        ZOMBIE      <em>HYPERTHERMIA</em>
+<em>HYPOTHERMIA</em> <em>WINDCHILL</em>   CANT_SPRINT <em>UNCOMFORTABLE</em>
+<em>NOXIOUS_SMELL</em>           FOOD_EATEN</div>
+      <p>The nine picked out above are invisible to us today — no stat we read exposes them. Three of those nine are the exact conditions <code>World.RULES</code> instructs the narrator to dramatise: it says <em>"being soaked and cold is genuinely dangerous in the wrong season"</em> while giving the narrator no way to know the survivor is wet, chilled, or standing in wind.</p>
+      <div class="note"><b>Fix:</b> one loop over <code>MoodleType</code>, emitting name and level for anything above zero. Perhaps thirty lines. It also does something the charter has been fighting for since the first build — <em>"numbers are yours to feel, not to quote"</em> is currently enforced against a state block that contains nothing but numbers. Moodles hand the narrator the feeling directly.</div>
+      <div class="note"><b>Done:</b> <code>StateReader.feeling()</code> reflects over the <code>MoodleType</code> registry and emits every active moodle with its display label and level, under a note telling the narrator these outrank the raw stats. Mod-registered moodles come through for free.</div>
+    </div>
+
+    <div class="finding sev-3">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag open">Still open</span><span class="tag sev">Priority 3</span><span class="tag">Detail</span><span class="tag evi">javap</span></div>
+        <h3>Three wound details worth one line each</h3>
+      </div>
+      <p><code>BodyPart</code> exposes <code>haveGlass()</code>, <code>stitched()</code> and <code>getStitchTime()</code> — glass still in the wound and a wound that has been sewn are both concrete, and both are the kind of thing a page notices. More interesting: <code>SetScratchedWindow()</code> and <code>SetScratchedWeapon()</code> mean the engine distinguishes a scratch taken climbing through glass from one taken off a zombie. That distinction is the entire content of the survivor's dread, and we do not read it.</p>
+      <div class="note"><b>Checked and absent:</b> no per-part bullet-lodged accessor exists in 42.20.3 — I looked. Lodged bullets are not a thing the state can report, so the checklist item is answered "not available" rather than "not done".</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Character build architecture</h2><span class="n">§4</span></div>
+
+  <div class="stack">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Prose quality</span><span class="tag evi">javap</span></div>
+        <h3>The narrator is handed a list of trait names and asked to guess</h3>
+      </div>
+      <p>The charter's <em>WHO THEY ARE</em> block is one of the best things in the prompt — biography not statistics, never name a trait, a tendency rather than a compulsion. It is asked to do that work on a bare array of strings.</p>
+      <p>For "Claustrophobic" that is fine. For <em>Thin-skinned</em>, <em>Conspicuous</em>, <em>Desensitized</em>, <em>Fast Learner</em>, <em>Adrenaline Junkie</em>, <em>Crafty</em>, <em>Artisan</em> the narrator has to infer both what the trait does and — crucially — <b>whether it is a virtue or a flaw</b>. It will get some of them wrong, and a page that treats a burden as a gift misreads the character at the root.</p>
+      <p>All of it is one static call away. <code>CharacterTraitDefinition.getCharacterTraitDefinition(trait)</code> yields <code>getUIName()</code>, <code>getDescription()</code>, <code>getXpBoosts()</code> and <code>getCost()</code> — and cost is the polarity: positive means the player <em>spent</em> points on it, negative means they took it to buy something else.</p>
+      <div class="note"><b>Deliberately not recommended:</b> the numeric point budget itself. It is character-creation UI, not a fact about the world, and putting arithmetic in the prompt invites exactly the statistic-quoting the charter bans. Ship polarity and description; leave the ledger out. Occupation deserves the same treatment — right now it is a bare name, and <code>getPerkBoost()</code> would say what the trade actually made them good at, which is the concrete grounding under "an electrician counts outlets".</div>
+      <div class="note"><b>Done:</b> Traits are now objects, not strings: name, UI name, description, and a polarity read off <code>getCost()</code> &mdash; &ldquo;a strength, chosen and paid for&rdquo; against &ldquo;a weakness, taken on purpose&rdquo;. The point budget was deliberately left out.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Skill progression &amp; knowledge acquisition</h2><span class="n">§5</span></div>
+
+  <p>The weakest subject against the checklist, and the one where your own earlier instruction — <em>"watching TV was important, but only to level 3"</em> — is still not actually encoded anywhere.</p>
+
+  <div class="stack" style="margin-top:26px">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Verified schedule</span><span class="tag evi">RadioData.xml</span></div>
+        <h3>Life and Living stops teaching on day 8, and nothing in the prompt knows it</h3>
+      </div>
+      <p>I pulled channel 203 out of <code>media/radio/RadioData.xml</code> on your machine and counted every XP code in it. This is not recalled from a wiki; it is the file the game reads.</p>
+      <div class="excerpt">Life and Living TV   ·   Television   ·   freq 203
+
+  COO+1   61 lines     Cooking
+  CRP+1   53 lines     Carpentry
+  FIS+1   17 lines     Fishing
+  FOR+1   12 lines     Foraging
+  TRA+1    8 lines     Trapping
+  FRM+1    6 lines     Farming
+  BOR-1  267 lines     boredom relief
+  STS-1    5 lines     stress relief
+
+  RCP=  Make Cake Batter · Make Fishing Rod
+        Make Pie Dough   · Make Crate Trap
+
+  Daily shape    morning cooking · midday carpentry
+                 evening rotates through the rest
+  <em>XP grants end after day 8.</em>  Days 9-11 still
+  broadcast and teach nothing. Schedule ends day 11.</div>
+      <p>So there is a hard eight-day window, it is front-loaded, and it closes. That is real narrative pressure of exactly the kind the story engine exists to dramatise, and the narrator currently has no idea the television is anything but furniture.</p>
+      <p>The charter half-gestures at this already — <em>"mains power and broadcast television are temporary and are worth noticing while they last"</em> — but frames it purely as atmosphere. It never connects the set to <em>learning</em>, so the narrator notices a working television as a small miracle and not as a resource with a clock on it.</p>
+      <div class="note"><b>Fix:</b> a short block in <code>World.KNOX</code> carrying the schedule above, plus a line in <code>World.RULES</code> that reading and watching are how skill is actually acquired. Add the outbreak-day count from §1 and the narrator can feel the window closing without ever being allowed to say so.</div>
+      <div class="note"><b>Done:</b> The schedule is in <code>World.KNOX</code> as its own block, framed as what a working set is worth in the first week rather than as a thing to go and do. <code>World.RULES</code> gained a LEARNING paragraph covering the five graded volumes and the television together.</div>
+    </div>
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 2</span><span class="tag">Missing signal</span><span class="tag evi">javap</span></div>
+        <h3>Skill books are inventory, not progression</h3>
+      </div>
+      <p>Volume 1–5 books are the whole mid-game learning loop, and the snapshot reports only a title and a <code>[read]</code> / <code>[unread]</code> flag. Whether the volume matches the current level, and whether a multiplier is live right now, are both readable: <code>IsoGameCharacter$XP</code> exposes <code>getMultiplier(Perk)</code> and <code>getPerkBoost(Perk)</code>.</p>
+      <p><code>Delta.skills()</code> already reports level-ups well, which makes the gap sharper — the narrator is told a skill went up and given nothing about why. A carpentry level that arrived off a book reads differently from one that arrived off a hammer, and today they are indistinguishable.</p>
+      <div class="note"><b>Done:</b> The skills block now carries <code>fromTheirTrade</code> from <code>getPerkBoost()</code> and a <code>learningFaster</code> note from <code>getMultiplier()</code>, so a level that arrived off a book reads differently from one earned with a hammer.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>World degradation &amp; infrastructure collapse</h2><span class="n">§6</span></div>
+
+  <div class="ledger">
+    <div class="has">
+      <h4>In the prompt</h4>
+      <ul>
+        <li>The ATTRITION paragraph: batteries die, petrol goes stale, tools break, every shop is emptier than the last.</li>
+        <li>Weather in full — temperature, light, rain, snow, fog, wind.</li>
+        <li>The One Year spine leans on stores, seasons and the leaking roof.</li>
+      </ul>
+    </div>
+    <div class="lacks">
+      <h4>Not in the prompt</h4>
+      <ul>
+        <li><b>Whether the power is on right now.</b> One method call.</li>
+        <li><b>Whether the water is on right now.</b> Also one method call.</li>
+        <li>The shutoff days, which the sandbox knows.</li>
+        <li>Erosion — for a scenario whose arc is <em>time</em>.</li>
+        <li>Generators, rain collectors, fuel, plumbing. The narrator does not know generators exist.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="stack" style="margin-top:26px">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Correctness</span><span class="tag evi">javap</span><span class="tag evi">Apocalypse.lua</span></div>
+        <h3>"Nobody knows the day" is not true — the save does</h3>
+      </div>
+      <p><code>World.RULES</code> closes with <em>"the mains power and water WILL fail; nobody knows the day."</em> The second half is wrong, and it is wrong in a way that costs us the best slow-dread device in the game. <code>SandboxOptions</code> carries <code>elecShut</code> / <code>elecShutModifier</code> and <code>waterShut</code> / <code>waterShutModifier</code>; the Apocalypse defaults are mode 2 with modifier 14, so on a default save the grid goes inside the first month, centred near day 14.</p>
+      <p>Worse, the <em>live</em> state is trivial to read and we read neither. <code>IsoGridSquare.haveElectricity()</code> answers "is there power in this room"; <code>IsoWorld.instance.isHydroPowerOn()</code> answers "is the water grid still up". The night the power dies is one of the two or three biggest beats in a Zomboid campaign, and today it reaches the narrator only as an absence it has no instrument to detect.</p>
+      <div class="note"><b>Fix:</b> add both live booleans to the snapshot and both sandbox windows to <code>sandbox()</code>. Then <code>Delta</code> gets the beat for free — power on last page, power off this page, and the interval block says so in the one place the narrator is told to look first.</div>
+      <div class="note"><b>Done:</b> <code>utilities.powerHere</code> and <code>utilities.mainsWater</code> are in every snapshot, both shutoff windows are in the sandbox block, and <code>Delta.grid()</code> turns the moment either flips into a headline in the block the charter tells the narrator to read first.</div>
+    </div>
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag open">Still open</span><span class="tag sev">Priority 2</span><span class="tag">Scenario-critical</span><span class="tag evi">javap</span></div>
+        <h3>The One Year scenario cannot see time passing</h3>
+      </div>
+      <p>The survival spine's stated arc is attrition, and it asks the narrator to notice repetition and small changes inside it. The main visual evidence that months have gone by is the world going green over everything — the entire <code>zombie.erosion</code> package, with <code>erosionSpeed</code> and <code>erosionDays</code> in the sandbox. None of it reaches the prompt, so a base at month eight is described the same way it was at week one.</p>
+      <div class="note"><b>Partly done in 1.15.0:</b> <code>erosionSpeed</code> is now in the sandbox block, so the narrator knows how fast the world reclaims itself &mdash; but nothing reads the live erosion state, so a base at month eight still looks like week one. <b>Off-grid infrastructure is the other half of this</b>, and that part is done: <code>World.RULES</code> gained an OFF THE GRID paragraph on rain barrels, plumbing and generators &mdash; a generator framed as a trade rather than a solution, light and a cold fridge in exchange for a noise that says somebody is here.<br><br>The original finding read: A generator is loud, fuelled, breakable and changes the threat picture around a base — and it is absent from <code>World.RULES</code> entirely. Same for rain collectors and plumbing, which are the direct answer to a water grid the narrator does not know can fail.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Meta-events &amp; auditory migration</h2><span class="n">§7</span></div>
+
+  <div class="stack">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Absent entirely</span><span class="tag evi">javap</span><span class="tag evi">Apocalypse.lua</span></div>
+        <h3>The one set piece built for a narrator, and it is not in the prompt</h3>
+      </div>
+      <p>The helicopter is a scheduled, multi-day, audible event that follows the player and drags the local dead across grid cells into their walls. Slow dread with a cause you can hear coming. It is the most narratable thing in the game and the word does not appear anywhere in the mod's prompt. <code>SandboxOptions.helicopter</code> exists and defaults to 2 — "Sometimes" — on Apocalypse.</p>
+      <p><code>SandboxOptions.metaEvent</code> is the same story: the distant gunshots, screams and dog barks that the world generates on its own. <code>World.RULES</code> tells the narrator the dead follow sound, but never that sound <em>happens</em> unprompted. Under Rule 1 — never invent into the world — an off-screen gunshot is therefore not merely unmentioned, it is <b>forbidden</b>. We have accidentally banned the game's own ambience.</p>
+      <div class="note"><b>The honest limit:</b> I went looking for a live accessor and there is none. <code>ChopperCommand</code> is a server admin command; nothing exposes "is a helicopter overhead right now". So the fix is two-part, and the second part is the interesting one. Put the <em>possibility</em> into <code>World.KNOX</code> so the narrator may write a distant engine when the state shows the dead suddenly redistributing — and treat <b>the player's note channel as the sensor</b>. The player heard it; the player tells the device. That is not a workaround, it is the charter working as designed: the player is intent, and for this class of event the player is the only instrument we have.</div>
+      <div class="note"><b>Done:</b> <code>World.RULES</code> gained a THE WORLD MAKES ITS OWN NOISE paragraph covering off-screen gunshots, screams, dogs, car alarms and the helicopter, with the standing limits: you may write a sound she heard, you may not invent its cause, and you may not walk her toward it. <code>helicopter</code> and <code>metaEvent</code> are now in the sandbox block so the narrator knows whether they happen in this world at all.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Engine, sandboxing &amp; build milestones</h2><span class="n">§8</span></div>
+
+  <div class="stack">
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 2</span><span class="tag">Coverage</span><span class="tag evi">javap</span></div>
+        <h3>Eleven options read, a hundred and eighty-one available</h3>
+      </div>
+      <p><code>StateReader.sandbox()</code> reads zombie speed, strength, toughness, transmission, mortality, cognition, memory, sight, hearing, population and day length. The framing is right — <em>"where they differ from the ordinary rules above, THESE win"</em> — and the reflection on <code>getValueTranslation()</code> means a renamed option costs a line rather than the block. Good design.</p>
+      <p><code>SandboxOptions</code> declares 181 options. Most are irrelevant to prose. About a dozen are not, and every one of them has already come up in this audit: the four start-date fields, <code>elecShut</code>, <code>waterShut</code>, <code>helicopter</code>, <code>metaEvent</code>, <code>alarm</code>, <code>carAlarm</code>, <code>erosionSpeed</code>, <code>sirenShutoffHours</code>, plus <code>zombieRespawn</code> and <code>lootRespawn</code> — the last two because <code>World.RULES</code> asserts flatly that <b>nothing is renewable</b>, which is simply false on a save where they are switched on.</p>
+      <div class="note"><b>Done:</b> Nine more added &mdash; both shutoffs, house and car alarms, erosion speed, helicopters, meta-events, zombie respawn and loot respawn &mdash; plus a fallback so integer options report their value instead of being dropped. ATTRITION now defers to them rather than asserting nothing is renewable.</div>
+    </div>
+
+    <div class="finding sev-3">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag open">Still open</span><span class="tag sev">Priority 3</span><span class="tag">Scope call</span></div>
+        <h3>Most of this subject should stay out, and that is the finding</h3>
+      </div>
+      <p>Steam Workshop support, the engine's architecture and the build history are facts about the <em>software</em>, not the world. Putting them in the prompt invites precisely the meta-commentary the charter bans in the same breath as bullet points. Answering the checklist honestly: this is not a gap, it is a boundary, and it should be defended.</p>
+      <p>Two narrow exceptions. The snapshot's <code>modVersion</code> is <em>our</em> version — the <em>game</em> build should be in there too, because B42 changed what exists in the world (crafting overhaul, basements, animals, the new map packs) and a narrator writing B42 prose against B41 assumptions will place things that are not there. And you have two Workshop mods loaded on this machine; if either adds items, their names will appear in the state with no frame around them. Low priority, but a bare <code>mods</code> list would stop the narrator being surprised by its own inventory.</p>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Defects found along the way</h2><span class="n">not on the checklist</span></div>
+
+  <p>Four things surfaced while reading the source that are not about world knowledge at all.</p>
+
+  <div class="stack-tight" style="margin-top:22px">
+
+    <div class="finding sev-1">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 1</span><span class="tag">Duplication</span><span class="tag evi">Source read</span></div>
+        <h3>The campaign spine is sent twice on every request</h3>
+      </div>
+      <p><code>Campaign.fixedSpine()</code> emits the scenario spine, the premise and the opening into the cached system block. <code>Campaign.history()</code> then emits <b>the same three things again</b> into the cached prefix. Every page pays for both. Worse, the two copies disagree: <code>fixedSpine()</code> heads the premise <em>"WHY SHE IS DOING THIS"</em> and <code>history()</code> heads it <em>"WHY HE IS DOING THIS"</em>.</p>
+      <div class="note"><b>Fix:</b> strip the spine, premise and opening out of <code>history()</code> and leave it to do the one job its name promises — canon, places seen, and the pages.</div>
+      <div class="note"><b>Done:</b> <code>history()</code> no longer emits the spine, premise or opening. It carries what grows: places seen, canon, and the pages.</div>
+    </div>
+
+    <div class="finding sev-2">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 2</span><span class="tag">Regression</span><span class="tag evi">Source read</span></div>
+        <h3>The gender leak came back in <code>Campaign.java</code></h3>
+      </div>
+      <p>You caught this once in <code>Scenario.java</code> and it was fixed wholesale there. Three headings in <code>Campaign.java</code> were missed: <code>"WHY SHE IS DOING THIS"</code>, <code>"WHY HE IS DOING THIS"</code> and <code>"### PLACES HE HAS SEEN"</code>. A male survivor currently gets <em>SHE</em> in the system block and <em>HE</em> in the prefix on the same request, which is the loudest available way to make the model doubt the pronoun line it was given twice elsewhere.</p>
+      <div class="note"><b>Done:</b> All nine headings in <code>Campaign.java</code> rewritten to the survivor / they.</div>
+    </div>
+
+    <div class="finding sev-3">
+      <div class="finding-head">
+        <div class="tagrow"><span class="tag done">Fixed in 1.15.0</span><span class="tag sev">Priority 3</span><span class="tag">Formatting</span><span class="tag evi">Source read</span></div>
+        <h3>Broken text block in the opening-page delta</h3>
+      </div>
+      <p><code>Delta.between()</code> line 49 has lost its line continuations, so the first-page prompt of every campaign contains runs of twenty spaces mid-sentence: <em>"The survivor is exactly&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;where the state puts them and has done nothing you can&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;describe as an action."</em> Cosmetic, but it is in the single most important prompt the mod ever sends.</p>
+      <p>Alongside it: <code>StateReader.camel()</code> at line 853 is dead code — never called — which means the stats block ships raw <code>CharacterStat</code> ids rather than the camelCase names the surrounding comment implies.</p>
+      <div class="note"><b>Done:</b> Line continuations restored, and <code>StateReader.camel()</code> deleted.</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Suggested order of work</h2><span class="n">by value over cost</span></div>
+
+  <ol class="order">
+    <li><b>Region names from <code>regions.lua</code>.</b> The NAMES rule still has almost nothing to permit, so every page in Muldraugh calls it &ldquo;the town&rdquo;. Build the coordinate table at build time and emit <code>position.region</code>.<span>&sect;2 &middot; the largest thing left</span></li>
+    <li><b>Glass, stitches, and where a scratch came from.</b> <code>haveGlass()</code>, <code>stitched()</code>, and the window-versus-zombie distinction that is the whole content of the survivor's dread.<span>&sect;3 &middot; ~10 lines</span></li>
+    <li><b>Live erosion.</b> The One Year scenario still cannot see months pass.<span>&sect;6 &middot; needs a read strategy first</span></li>
+    <li><b>The game build in the snapshot.</b> <code>modVersion</code> is ours; the narrator should know it is writing B42.<span>&sect;8 &middot; one line</span></li>
+    <li><b>Watch the prose.</b> Twelve findings landed at once and several of them are prompt text, which can only be judged against real pages. The doom dial in particular wants a read at each of its three settings.<span>all &middot; play it</span></li>
+  </ol>
+
+  <p style="margin-top:24px">One through four are all small and all in <code>StateReader</code> and <code>Campaign</code> — a single build. Five through eight are prompt text, which means they can be judged against real pages rather than reasoned about. Nine and ten are the long tail.</p>
+</section>
+
+<footer>
+  PZStory context audit · 23 August 2026 · against build 1.14.0-rules and Project Zomboid 42.20.3<br>
+  Verified with javap against projectzomboid.jar, extraction from media/radio/RadioData.xml,
+  media/lua/shared/Sandbox/Apocalypse.lua, a survey of media/maps, and a full read of all thirteen source files.
+</footer>
+
+</div>

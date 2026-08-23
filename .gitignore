@@ -1,0 +1,18 @@
+# Build output. The jar under mod/42/media/java/ IS committed on purpose -
+# see README - but nothing else from a build belongs here.
+build/
+*.class
+sources.txt
+
+# NEVER COMMIT THESE. profiles.json holds API keys.
+profiles.json
+settings.json
+*.key
+.env
+secrets*
+
+# Player data
+campaign.json
+Saves/
+console.txt
+*.log
