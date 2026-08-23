@@ -63,10 +63,6 @@ public class StoryAPI {
         }
     }
 
-    public static void snapshotToConsole() {
-        System.out.println("[PZStorySnapshot] " + snapshot());
-    }
-
     /**
      * "none" | "analog" | "digital" - what the survivor can tell about the
      * time. The book's header obeys this: no watch, no clock.

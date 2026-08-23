@@ -43,8 +43,13 @@ local function takeSnapshot(why)
         notify("PZStory: bridge not loaded", false)
         return
     end
-    local ok, err = pcall(function() PZStory.snapshotToConsole() end)
+    -- The production bridge returns the snapshot but never writes private game
+    -- state to console.txt on its own. This optional dev harness makes that
+    -- privacy-sensitive choice explicit at the point where F9 is handled.
+    local snapshot
+    local ok, err = pcall(function() snapshot = PZStory.snapshot() end)
     if ok then
+        print("[PZStorySnapshot] " .. tostring(snapshot or ""))
         say("snapshot written to console (" .. why .. ")")
         notify("PZStory: snapshot written", true)
     else

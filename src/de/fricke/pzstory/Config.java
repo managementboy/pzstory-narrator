@@ -260,6 +260,39 @@ public final class Config {
 
     /** Every log line from the mod goes through here. */
     public static void log(String msg) {
-        System.out.println("[PZStory] " + redact(msg));
+        System.out.println("[PZStory] " + safeForLog(msg));
+    }
+
+    /**
+     * One physical log record, even when a provider or another Lua mod passes
+     * CR/LF, terminal escapes, NULs, or a very large string. Redaction runs on
+     * the bounded candidate before anything reaches stdout.
+     */
+    private static String safeForLog(String text) {
+        String raw = String.valueOf(text);
+        if (raw.length() > 16384) raw = raw.substring(0, 16384) + "...[input truncated]";
+        raw = redact(raw);
+
+        StringBuilder out = new StringBuilder(Math.min(raw.length() + 32, 4096));
+        for (int i = 0; i < raw.length() && out.length() < 4096; i++) {
+            char c = raw.charAt(i);
+            switch (c) {
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20 || c == 0x7f) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        if (out.length() >= 4096) {
+            out.setLength(Math.max(0, 4096 - "...[truncated]".length()));
+            out.append("...[truncated]");
+        }
+        return out.toString();
     }
 }

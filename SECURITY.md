@@ -23,11 +23,17 @@ with it. `.gitignore` refuses `profiles.json`, `settings.json`, `*.key` and
 `.env` in case anyone drops one in the tree.
 
 Keys are never written into a page, never stored in the campaign file, and
-never logged. `Config.redact()` runs over **every** line the mod prints, in two
-passes: the exact keys currently loaded, then a generic sweep for `sk-…` and
-`AIza…` shapes in case a provider echoes one back inside an error body. This is
-why `console.txt` is safe to paste into a bug report — but skim it anyway
-before you do.
+never intentionally logged. `Config.redact()` runs over every production log
+record in two passes: the exact keys currently loaded, then a generic sweep for
+`sk-…` and `AIza…` shapes in case a provider echoes one back inside an error
+body. Control characters are escaped and records are length-limited so an
+untrusted error cannot forge additional log lines.
+
+The optional development probe can print a complete snapshot when you press
+F9. That snapshot contains the character name, exact position and inventory.
+Always review `console.txt` before sharing it; redaction is a defence in depth,
+not a promise that every possible private value or future provider key format
+can be identified automatically.
 
 ## Audit, August 2026 — second pass (release 1.24.0)
 
