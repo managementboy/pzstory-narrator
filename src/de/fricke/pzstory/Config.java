@@ -23,6 +23,11 @@ import zombie.ZomboidFileSystem;
  */
 public final class Config {
 
+    /** Bounds a configured number. Every numeric setting goes through this. */
+    private static int clamp(int v, int lo, int hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
     /** One provider configuration. */
     public static final class Profile {
         public final String name;
@@ -31,6 +36,8 @@ public final class Config {
         public final String apiKey;
         public final String baseUrl;     // null for anthropic (fixed endpoint)
         public final int maxTokens;
+        /** Extra budget for model reasoning. 0 disables it. See profiles.json docs. */
+        public final int thinkingTokens;
         public final String systemMode;  // native | prepend_to_user | both
         public final String cacheTtl;    // "1h" | "5m" | "off"
 
@@ -40,7 +47,15 @@ public final class Config {
             this.model = JsonParse.str(m, "model", "");
             this.apiKey = JsonParse.str(m, "apiKey", "");
             this.baseUrl = JsonParse.str(m, "baseUrl", null);
-            this.maxTokens = JsonParse.num(m, "maxTokens", 2000);
+            // Clamped, not trusted. A negative or absurd value from a
+            // hand-edited profiles.json would otherwise reach the provider.
+            this.maxTokens = clamp(JsonParse.num(m, "maxTokens", 2000), 256, 32000);
+            // Reasoning budget, OFF by default and never applied implicitly.
+            // Anthropic bills thinking tokens against max_tokens, so the old
+            // code added 8000 to whatever the player had configured - a cap
+            // that silently became 8000 higher than the number they typed.
+            // Now it is a field they set on purpose, and 0 means no thinking.
+            this.thinkingTokens = clamp(JsonParse.num(m, "thinkingTokens", 0), 0, 24000);
             this.systemMode = JsonParse.str(m, "systemMode", "native");
             // 1h by default: pages are written minutes apart, and the 5-minute
             // default would miss between most of them. Cache writes cost 2x,

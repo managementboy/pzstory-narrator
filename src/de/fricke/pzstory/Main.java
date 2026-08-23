@@ -8,11 +8,16 @@ package de.fricke.pzstory;
  */
 public class Main {
 
-    public static final String VERSION = "1.23.0-notnow";
+    /**
+     * Kept as an alias so nothing that already reads Main.VERSION breaks.
+     * The value lives in {@link Version} - one place, verified by build.sh.
+     */
+    public static final String VERSION = Version.RELEASE;
 
     public static void main(String[] args) {
         System.out.println("[PZStory] ============================================");
-        System.out.println("[PZStory] Java mod loaded, version " + VERSION);
+        System.out.println("[PZStory] Java mod loaded, release " + Version.RELEASE
+                + " (bridge API " + Version.API + ")");
         System.out.println("[PZStory] jvm=" + System.getProperty("java.version")
                 + " classloader=" + Main.class.getClassLoader());
         System.out.println("[PZStory] ============================================");

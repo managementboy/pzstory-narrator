@@ -67,7 +67,17 @@ local BRAND = "Premium Tech."
 -- reloads when Project Zomboid itself restarts. During development the two
 -- WILL get out of step, and an unguarded call then throws on every tick and
 -- buries the log. Check once, say so plainly, and refuse to go on.
-local NEEDS_JAVA = "1.23.1"
+-- The BRIDGE API version this file needs, compared for EXACT equality.
+--
+-- Not the release version. The two were the same string until 1.24.0, which
+-- had two bad consequences. Every cosmetic release forced a firmware mismatch
+-- and a full restart of Project Zomboid, and the comparison was a PREFIX
+-- match: a JAR reporting "1.23.10" satisfied a file requiring "1.23.1", so an
+-- incompatible pairing could load and then fail one call at a time.
+--
+-- Bump this only when the Java surface this file calls actually changes, and
+-- bump Version.API in Java to match. build.sh refuses to build if they differ.
+local NEEDS_API = "2"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -99,6 +109,15 @@ local function javaVersion()
     local v
     if not pcall(function() v = PZStory.version() end) then return "?" end
     return v or "?"
+end
+
+--- The bridge API version the loaded JAR reports, or nil if it is too old to
+--- have apiVersion() at all (anything before release 1.24.0).
+local function javaApi()
+    if PZStory == nil or type(PZStory.apiVersion) ~= "function" then return nil end
+    local v
+    if not pcall(function() v = PZStory.apiVersion() end) then return nil end
+    return v
 end
 local COLS  = 46      -- prose columns, constant at every zoom step
 local ROWS  = 26
@@ -421,15 +440,19 @@ end
 --- True when the JAR is older than this file needs. Checked once per open,
 --- never per tick.
 function PZStoryBook:checkFirmware()
-    local v = javaVersion()
+    local v   = javaVersion()
+    local api = javaApi()
     self.javaVer = v
-    self.mismatch = not (type(v) == "string" and v:sub(1, #NEEDS_JAVA) == NEEDS_JAVA)
+    -- EXACT equality on the API version. A prefix match let "1.23.10" pass a
+    -- requirement for "1.23.1"; a nil means the JAR predates apiVersion().
+    self.mismatch = (api == nil) or (api ~= NEEDS_API)
     if self.mismatch then
         self.pageTitle = "FIRMWARE MISMATCH"
         self.pageText  =
             "The Pilot's software was replaced while the unit was still running.\n\n"
-            .. "device firmware : " .. tostring(v) .. "\n"
-            .. "software expects: " .. NEEDS_JAVA .. "\n\n"
+            .. "device firmware : " .. tostring(v)
+            .. " (bridge " .. tostring(api or "too old") .. ")\n"
+            .. "software expects: bridge " .. NEEDS_API .. "\n\n"
             .. "Loading a save reloads the interface but not the hardware layer. "
             .. "Quit Project Zomboid completely and start it again.\n\n"
             .. "Writing is disabled until then, so nothing is lost."
@@ -1791,8 +1814,8 @@ Events.OnGameStart.Add(function()
     if f then
         pcall(f)
     else
-        print("[PZStory] JAR is " .. javaVersion() .. " but the interface needs "
-              .. NEEDS_JAVA .. " - restart Project Zomboid (loading a save reloads"
+        print("[PZStory] JAR bridge is " .. tostring(javaApi()) .. " but the interface needs "
+              .. NEEDS_API .. " - restart Project Zomboid (loading a save reloads"
               .. " Lua but not Java).")
     end
 end)

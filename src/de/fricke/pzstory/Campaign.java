@@ -56,6 +56,27 @@ public final class Campaign {
 
     private static boolean loaded = false;
 
+    /**
+     * Which campaign this is, counting from process start.
+     *
+     * Loading a different save resets every field in this class, but a model
+     * request already in flight knows nothing about that: its callback would
+     * happily write page 14 of the OLD book into the NEW one, along with its
+     * canon, its directions and its lastState. That is silent cross-save
+     * corruption and it needs no unusual timing - just a save loaded while a
+     * page is being written.
+     *
+     * A request captures this number when it starts and is dropped on
+     * completion if the number has moved.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong GENERATION =
+            new java.util.concurrent.atomic.AtomicLong(1);
+
+    /** The current campaign generation. Cheap; safe from any thread. */
+    public static long generation() {
+        return GENERATION.get();
+    }
+
     private Campaign() {}
 
     // ----------------------------------------------------------------- paths
@@ -78,6 +99,9 @@ public final class Campaign {
 
     /** Call when a save is loaded - the path is save-specific. */
     public static synchronized void reset() {
+        // Bump FIRST. Anything in flight is now writing into a book that no
+        // longer exists, and will be discarded when it tries to commit.
+        GENERATION.incrementAndGet();
         root = null;
         PAGES.clear();
         CANON.clear();

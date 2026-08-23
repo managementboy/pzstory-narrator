@@ -92,8 +92,14 @@ A local model through Ollama needs no key and no account.
 No Gradle, no downloads, no daemon:
 
 ```sh
-./build.sh
+PZ=/path/to/ProjectZomboid ./build.sh
 ```
+
+The build is **deterministic** — sorted inputs and a pinned timestamp — so two
+builds of the same source produce a byte-identical jar and you can check the
+committed binary against your own. Set `SOURCE_DATE_EPOCH` to pin a different
+stamp. It ends by running `tools/verify.sh`, which refuses to ship a jar whose
+version disagrees with `mod.info` or the Lua.
 
 You need **JDK 25 or newer** — Project Zomboid 42.20.3 compiles its own classes
 to bytecode major 69, so an older compiler cannot read them. Edit the `LIB`
@@ -103,6 +109,15 @@ The compiled `PZStory.jar` is committed under `mod/42/media/java/` so the mod
 can be installed without a toolchain. If you would rather not trust a binary
 from a stranger, delete it and run `./build.sh` — that is the whole point of
 shipping the source beside it.
+
+### Versions
+
+Two numbers, because they answer different questions. **Release** (`1.24.0`) is
+for people and changes whenever anything ships. **Bridge API** (`2`) changes
+only when the Java surface Lua calls actually changes, and Lua compares it for
+exact equality — so a cosmetic release no longer forces a firmware mismatch,
+and an incompatible pairing can no longer load. Both live in
+`src/de/fricke/pzstory/Version.java` and are verified at build time.
 
 > **Java only reloads when Project Zomboid restarts.** Lua reloads when a save
 > loads. During development the two *will* drift, so the device checks the JAR
@@ -116,12 +131,24 @@ src/          Java source — the state reader, the prompt, the model client
 mod/42/       The mod as players install it (Lua + the built jar)
 docs/         Player-facing setup
 dev/          Development tooling. Not needed to play
-build.sh      javac + jar
+test/         Unit tests - pure Java, no game jars needed
+tools/        test.sh (unit tests) and verify.sh (release integrity)
+build.sh      javac + jar, then verify
 ```
 
 `dev/PZStory_Probe.lua` adds F9 (dump a state snapshot to the console) and F10
 (self-test the Java bridge). Drop it in beside `PZStoryBook.lua` if you are
 working on the mod; leave it out if you are playing.
+
+## Tests
+
+```sh
+./tools/test.sh     # unit tests; no Project Zomboid jars required
+./tools/verify.sh   # version integrity, jar contents, secret scan
+```
+
+Both run in CI. Anything that touches `zombie.*` cannot be unit-tested without
+the proprietary jars and is verified in-game instead — see `dev/README.md`.
 
 ## Licence
 

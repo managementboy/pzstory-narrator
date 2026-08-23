@@ -23,13 +23,33 @@ public class StoryAPI {
         // Kahlua wants a public no-arg constructor.
     }
 
+    /** Human-facing release, e.g. "1.24.0". For display and bug reports. */
     public static String version() {
-        return Main.VERSION;
+        return Version.RELEASE;
     }
 
-    /** Writes to stdout, which lands in console.txt. The dev-time log channel. */
+    /**
+     * Lua/Java bridge compatibility version.
+     *
+     * Lua compares this for EXACT equality. It used to prefix-match the
+     * release string, which meant a JAR reporting "1.23.10" satisfied a Lua
+     * that required "1.23.1" - a silently incompatible pairing.
+     */
+    public static String apiVersion() {
+        return Version.API;
+    }
+
+    /**
+     * Writes to console.txt. The dev-time log channel for Lua.
+     *
+     * Routed through Config.log so it gets the same redaction and control
+     * character sanitising as everything else. It used to println directly,
+     * which meant anything Lua passed - including a provider error body or a
+     * profile name - reached the log raw, and could inject CR/LF to forge log
+     * lines.
+     */
     public static void log(String s) {
-        System.out.println("[PZStory] lua> " + s);
+        Config.log("lua> " + s);
     }
 
     // --------------------------------------------------------- game state
@@ -143,8 +163,12 @@ public class StoryAPI {
         // Only genuinely small-context servers need trimming. Gemini and
         // the hosted OpenAI-compatible models carry the whole book fine;
         // a local 8B on a laptop does not.
+        // Endpoint.isLocal parses the URL instead of searching it for a
+        // substring. The old test also matched https://localhost.evil.example
+        // and any URL with "localhost" anywhere in its path, which would have
+        // silently truncated a hosted campaign's history.
         int budget = (p != null && "openai-compatible".equals(p.kind)
-                      && p.baseUrl != null && p.baseUrl.contains("localhost")) ? 24000 : 0;
+                      && Endpoint.isLocal(p.baseUrl)) ? 24000 : 0;
         String history = Campaign.history(budget);
 
         // The player's voice: standing preferences restated every time, plus
@@ -179,8 +203,11 @@ public class StoryAPI {
                 history,                              // cached prefix
                 Prompt.userTurn(state, voice, change, Campaign.pageCount() == 0,
                         Delta.stillStanding(Campaign.lastState(), state)),
-                () -> {
-                    String all = Llm.text();
+                all -> {
+                    // The completed text arrives as an argument. It used to be
+                    // fetched with Llm.text(), which read whatever the global
+                    // buffer held at the moment the callback ran - a later
+                    // request could have replaced it.
                     // Fixed on the first page only; setPremise ignores
                     // any later attempt to overwrite it.
                     Campaign.setPremise(Prompt.premise(all));
@@ -389,6 +416,13 @@ public class StoryAPI {
 
     /** Called when a save loads: the campaign store is per-save. */
     public static void onGameStart() {
+        // Order matters. A request started against the PREVIOUS save is still
+        // in flight here, and its callback would write that save's page, canon,
+        // directions and lastState into the book we are about to load. Cancel
+        // it first; Campaign.reset() then bumps the generation, so even a
+        // worker that is mid-socket-read will be discarded when it tries to
+        // commit. Neither call blocks the game thread.
+        Llm.invalidateForSaveChange();
         Campaign.reset();
         Campaign.load();
     }

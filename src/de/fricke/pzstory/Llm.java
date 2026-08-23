@@ -38,23 +38,69 @@ public final class Llm {
 
     private static HttpClient http;
 
-    // --- state shared with the game thread; guarded by LOCK -----------------
+    /**
+     * One request, and everything belonging to it.
+     *
+     * THIS USED TO BE FIFTEEN STATIC FIELDS, and that was a correctness bug,
+     * not a style one. The failure needed no unusual timing:
+     *
+     *   1. request A is streaming
+     *   2. A is cancelled - the global status becomes CANCELLED
+     *   3. B starts, clears the shared buffers, installs a new cancel flag
+     *      and sets CONNECTING
+     *   4. A's worker finally exits, sees CONNECTING, and sets it to DONE
+     *   5. late bytes from A land in B's buffer; A's callback commits a page
+     *      built from A's text against B's campaign
+     *
+     * Every mutation now names the request it belongs to and is dropped
+     * unless that request is still the active one, so a dying worker cannot
+     * touch its successor's state no matter when it wakes up.
+     */
+    private static final class Req {
+        final long id;
+        final Status[] status = { Status.CONNECTING };
+        final StringBuilder full = new StringBuilder();
+        final StringBuilder pending = new StringBuilder();
+        String error;
+        String failKind;
+        int retryAfter;
+        long startedAt = System.currentTimeMillis();
+        long firstTokenAt;
+        int inputTokens, cacheRead, cacheWrite, outputTokens;
+        final AtomicBoolean cancelled = new AtomicBoolean(false);
+        /** Set once a terminal condition is genuinely observed. See P1. */
+        boolean sawTerminal;
+        /** The campaign this request was started for. See Campaign.generation(). */
+        final long generation;
+        /** Live response body, so cancel() can shut it and free the worker. */
+        volatile java.io.Closeable body;
+        /** Guards run-at-most-once for the success callback. */
+        final AtomicBoolean callbackRan = new AtomicBoolean(false);
+
+        Req(long id, long generation) { this.id = id; this.generation = generation; }
+
+        boolean isTerminal() {
+            Status st = status[0];
+            return st == Status.DONE || st == Status.ERROR || st == Status.CANCELLED;
+        }
+    }
+
     private static final Object LOCK = new Object();
-    private static Status status = Status.IDLE;
-    private static final StringBuilder full = new StringBuilder();
-    private static final StringBuilder pending = new StringBuilder();
-    private static String error = null;
-    /** One stable word for the KIND of failure, for the device to theme. */
-    private static String failKind = null;
-    /** Seconds the provider asked us to wait, or 0 if it did not say. */
-    private static int retryAfter = 0;
-    private static long startedAt = 0;
-    private static long firstTokenAt = 0;
-    private static int inputTokens = 0;
-    private static int cacheRead = 0;
-    private static int cacheWrite = 0;
-    private static int outputTokens = 0;
-    private static AtomicBoolean cancelFlag = new AtomicBoolean(false);
+    private static final java.util.concurrent.atomic.AtomicLong SEQ =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** The request the device is currently showing. Null before the first one. */
+    private static Req active;
+
+    /**
+     * True while a worker thread is still running, even after cancellation.
+     *
+     * Cancellation is a REQUEST, not an event: the worker may be blocked in a
+     * socket read for some time afterwards. Treating the slot as free the
+     * moment cancel() returned is exactly what let A and B overlap, so a new
+     * request is refused until the previous worker has actually exited.
+     */
+    private static boolean workerBusy = false;
 
     private Llm() {}
 
@@ -62,7 +108,12 @@ public final class Llm {
         if (http == null) {
             http = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(20))
-                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    // NEVER, not NORMAL. A redirect is an instruction from
+                    // the far end to send the same request - including the
+                    // x-api-key header and the whole game state - somewhere
+                    // else, and HttpClient would follow it across origins
+                    // without re-running any endpoint policy.
+                    .followRedirects(HttpClient.Redirect.NEVER)
                     .build();
         }
         return http;
@@ -79,7 +130,7 @@ public final class Llm {
         return start(system, "", user, null);
     }
 
-    public static String start(String system, String user, Runnable onDone) {
+    public static String start(String system, String user, java.util.function.Consumer<String> onDone) {
         return start(system, "", user, onDone);
     }
 
@@ -91,58 +142,98 @@ public final class Llm {
      * @param tail   the volatile part: the live state and the player's voice.
      *               Changes every call, so it must come last.
      * @param onDone run on the worker thread when the stream completes
-     *               successfully. Never run on error or cancel, so a failed
-     *               page cannot be committed to the campaign.
+     *               successfully, receiving the completed text DIRECTLY.
+     *               Never run on error, cancellation, truncation, or after
+     *               the campaign it was started for has been replaced. It is
+     *               handed the text rather than calling Llm.text() so that a
+     *               later request cannot substitute its own output underneath
+     *               a callback that is already running.
      */
-    public static String start(String system, String cached, String tail, Runnable onDone) {
+    public static String start(String system, String cached, String tail,
+                               java.util.function.Consumer<String> onDone) {
         final String user = tail;
         final String prefix = cached;
+        final Req req;
+        final Config.Profile p;
         synchronized (LOCK) {
-            if (status == Status.CONNECTING || status == Status.STREAMING) {
-                return "a page is already being written";
+            // Not "is the status terminal" - a cancelled request whose worker
+            // is still unwinding must still hold the slot, or its dying gasp
+            // lands in the next request's buffer.
+            if (workerBusy) {
+                return active != null && active.status[0] == Status.CANCELLED
+                        ? "still stopping the last page - try again in a moment"
+                        : "a page is already being written";
             }
-            Config.Profile p = Config.active();
+            p = Config.active();
             if (p == null) return "no active profile - check profiles.json";
             if (!p.usable()) return "profile '" + p.name + "' is not usable: " + p.describe();
 
-            full.setLength(0);
-            pending.setLength(0);
-            error = null;
-            failKind = null;
-            retryAfter = 0;
-            inputTokens = 0;
-            outputTokens = 0;
-            cacheRead = 0;
-            cacheWrite = 0;
-            startedAt = System.currentTimeMillis();
-            firstTokenAt = 0;
-            cancelFlag = new AtomicBoolean(false);
-            status = Status.CONNECTING;
+            req = new Req(SEQ.incrementAndGet(), Campaign.generation());
+            active = req;
+            workerBusy = true;
+        }
 
-            final AtomicBoolean myCancel = cancelFlag;
-            POOL.submit(() -> {
-                run(p, system, prefix, user, myCancel);
-                boolean ok;
-                synchronized (LOCK) { ok = (status == Status.DONE && full.length() > 0); }
-                if (ok && onDone != null) {
-                    try {
-                        onDone.run();
-                    } catch (Throwable t) {
-                        Config.log("post-stream hook failed: " + t);
-                    }
-                }
-            });
-            return null;
+        POOL.submit(() -> {
+            try {
+                run(req, p, system, prefix, user);
+            } finally {
+                synchronized (LOCK) { workerBusy = false; }
+            }
+            // Read the outcome under the lock, then decide outside it.
+            final boolean ok;
+            final String text;
+            synchronized (LOCK) {
+                ok = active == req
+                        && req.status[0] == Status.DONE
+                        && req.full.length() > 0;
+                text = req.full.toString();
+            }
+            if (!ok || onDone == null) return;
+            // The campaign may have been swapped for another save while this
+            // request was in flight. Committing A's page into B's book is
+            // silent cross-save corruption, so the generation is rechecked
+            // here and again inside Campaign under its own lock.
+            if (req.generation != Campaign.generation()) {
+                Config.log("dropping a finished page: the save changed while it"
+                        + " was being written (gen " + req.generation
+                        + " -> " + Campaign.generation() + ")");
+                return;
+            }
+            if (!req.callbackRan.compareAndSet(false, true)) return;   // at most once
+            try {
+                onDone.accept(text);
+            } catch (Throwable t) {
+                Config.log("post-stream hook failed: " + t);
+            }
+        });
+        return null;
+    }
+
+    /**
+     * Asks the active request to stop.
+     *
+     * Returns immediately - the game thread must never wait on a socket. The
+     * worker notices the flag at its next loop, and closing the response body
+     * unblocks it out of a read that could otherwise sit on the single-thread
+     * executor until the five-minute timeout.
+     */
+    public static void cancel() {
+        Req r;
+        synchronized (LOCK) {
+            r = active;
+            if (r == null || r.isTerminal()) return;
+            r.cancelled.set(true);
+            r.status[0] = Status.CANCELLED;
+        }
+        java.io.Closeable b = r.body;
+        if (b != null) {
+            try { b.close(); } catch (Throwable ignored) { }
         }
     }
 
-    public static void cancel() {
-        synchronized (LOCK) {
-            cancelFlag.set(true);
-            if (status == Status.CONNECTING || status == Status.STREAMING) {
-                status = Status.CANCELLED;
-            }
-        }
+    /** Invalidates any in-flight request. Called when a different save loads. */
+    public static void invalidateForSaveChange() {
+        cancel();
     }
 
     /**
@@ -151,34 +242,61 @@ public final class Llm {
      */
     public static String poll() {
         synchronized (LOCK) {
-            String delta = pending.toString();
-            pending.setLength(0);
             Json j = new Json().obj();
-            j.put("status", status.name());
+            Req r = active;
+            if (r == null) {
+                j.put("status", Status.IDLE.name());
+                j.put("delta", "");
+                j.put("chars", 0);
+                j.put("done", true);
+                return j.endObj().toString();
+            }
+            String delta = r.pending.toString();
+            r.pending.setLength(0);
+            j.put("status", r.status[0].name());
             j.put("delta", delta);
-            j.put("chars", full.length());
-            j.put("done", status == Status.DONE || status == Status.ERROR || status == Status.CANCELLED);
-            if (error != null) j.put("error", error);
-            if (failKind != null) j.put("failKind", failKind);
-            if (retryAfter > 0) j.put("retryAfter", retryAfter);
-            if (startedAt > 0) j.put("elapsedMs", System.currentTimeMillis() - startedAt);
-            if (firstTokenAt > 0) j.put("firstTokenMs", firstTokenAt - startedAt);
-            if (inputTokens > 0) j.put("inputTokens", inputTokens);
-            if (cacheRead > 0) j.put("cacheRead", cacheRead);
-            if (cacheWrite > 0) j.put("cacheWrite", cacheWrite);
-            if (outputTokens > 0) j.put("outputTokens", outputTokens);
+            j.put("chars", r.full.length());
+            j.put("done", r.isTerminal());
+            if (r.error != null) j.put("error", r.error);
+            if (r.failKind != null) j.put("failKind", r.failKind);
+            if (r.retryAfter > 0) j.put("retryAfter", r.retryAfter);
+            if (r.startedAt > 0) j.put("elapsedMs", System.currentTimeMillis() - r.startedAt);
+            if (r.firstTokenAt > 0) j.put("firstTokenMs", r.firstTokenAt - r.startedAt);
+            if (r.inputTokens > 0) j.put("req.inputTokens", r.inputTokens);
+            if (r.cacheRead > 0) j.put("req.cacheRead", r.cacheRead);
+            if (r.cacheWrite > 0) j.put("req.cacheWrite", r.cacheWrite);
+            if (r.outputTokens > 0) j.put("req.outputTokens", r.outputTokens);
             return j.endObj().toString();
         }
     }
 
     public static String text() {
-        synchronized (LOCK) { return full.toString(); }
+        synchronized (LOCK) { return active == null ? "" : active.full.toString(); }
+    }
+
+    /** The current failure reason, or "". Typed accessor for the Lua bridge. */
+    public static String error() {
+        synchronized (LOCK) {
+            return (active == null || active.error == null) ? "" : active.error;
+        }
+    }
+
+    /** One stable word for the kind of failure, or "". */
+    public static String failKind() {
+        synchronized (LOCK) {
+            return (active == null || active.failKind == null) ? "" : active.failKind;
+        }
+    }
+
+    /** Seconds the provider asked us to wait, or 0. */
+    public static int retryAfterSeconds() {
+        synchronized (LOCK) { return active == null ? 0 : active.retryAfter; }
     }
 
     // ----------------------------------------------------------- the request
 
-    private static void run(Config.Profile p, String system, String prefix, String user,
-                            AtomicBoolean cancelled) {
+    private static void run(Req req, Config.Profile p, String system,
+                            String prefix, String user) {
         try {
             String body;
             HttpRequest.Builder rb = HttpRequest.newBuilder()
@@ -195,32 +313,27 @@ public final class Llm {
                 }
                 case "gemini" -> {
                     body = geminiBody(p, system, prefix, user);
+                    // A custom Gemini baseUrl used to bypass every check the
+                    // OpenAI adapter had. It gets the identical policy now.
                     String base = (p.baseUrl == null || p.baseUrl.isBlank())
                             ? "https://generativelanguage.googleapis.com/v1beta"
-                            : trimSlash(p.baseUrl);
-                    rb.uri(URI.create(base + "/models/" + p.model
+                            : Endpoint.requireAllowed(p.baseUrl);
+                    // The model id comes out of profiles.json and lands in the
+                    // path. Unencoded, "x?key=..." or "../../y" would rewrite
+                    // the endpoint; encodeSegment makes it inert.
+                    rb.uri(URI.create(base + "/models/"
+                            + Endpoint.encodeSegment(p.model)
                             + ":streamGenerateContent?alt=sse"))
                       .header("x-goog-api-key", p.apiKey);
                 }
                 case "openai-compatible" -> {
                     body = openaiBody(p, system, prefix, user);
-                    if (p.baseUrl == null || p.baseUrl.isBlank()) {
-                        fail("this profile needs a baseUrl");
-                        return;
-                    }
-                    // A key sent over plaintext HTTP is a key given away to
-                    // anything on the network path. Loopback is the honest
-                    // exception: that is Ollama or LM Studio on this machine,
-                    // where there is no path to sniff.
-                    String u = p.baseUrl.toLowerCase();
-                    if (u.startsWith("http://") && !p.apiKey.isEmpty()
-                            && !(u.contains("//localhost") || u.contains("//127.0.0.1")
-                                 || u.contains("//[::1]"))) {
-                        fail("refusing to send an API key over plain http to "
-                                + "a remote host - use https:// in profiles.json");
-                        return;
-                    }
-                    rb.uri(URI.create(trimSlash(p.baseUrl) + "/chat/completions"));
+                    // Note the policy is applied whether or not a key is set:
+                    // the BODY is private game state - the survivor, their
+                    // position, the player's notes, the whole campaign - and
+                    // that must not cross a network in clear text even when
+                    // there is no credential to steal.
+                    rb.uri(URI.create(Endpoint.requireAllowed(p.baseUrl) + "/chat/completions"));
                     // Local servers usually want no key at all; sending an
                     // empty Authorization header upsets some of them.
                     if (p.apiKey != null && !p.apiKey.isBlank()) {
@@ -228,57 +341,61 @@ public final class Llm {
                     }
                 }
                 default -> {
-                    fail("unknown provider kind '" + p.kind + "'");
+                    fail(req, "unknown provider kind '" + p.kind + "'");
                     return;
                 }
             }
 
-            HttpRequest req = rb
+            HttpRequest httpReq = rb
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                     .build();
 
             Config.log("request -> " + p.kind + "/" + p.model + " (" + body.length() + " bytes)");
 
             HttpResponse<InputStream> res =
-                    client().send(req, HttpResponse.BodyHandlers.ofInputStream());
+                    client().send(httpReq, HttpResponse.BodyHandlers.ofInputStream());
 
             if (res.statusCode() != 200) {
                 String errBody = new String(res.body().readAllBytes(), StandardCharsets.UTF_8);
                 int code = res.statusCode();
-                failKind = kindOf(code, errBody);
-                retryAfter = retryAfter(res, errBody);
-                fail("HTTP " + code + " " + explain(code)
+                req.failKind = kindOf(code, errBody);
+                req.retryAfter = retryAfter(res, errBody);
+                fail(req, "HTTP " + code + " " + explain(code)
                         + " - " + Config.redact(errBody.length() > 600
                             ? errBody.substring(0, 600) + "..." : errBody));
                 return;
             }
 
             synchronized (LOCK) {
-                if (status == Status.CONNECTING) status = Status.STREAMING;
+                if (req.status[0] == Status.CONNECTING) req.status[0] = Status.STREAMING;
             }
 
-            readSse(res.body(), cancelled, p.kind);
+            req.body = res.body();
+            readSse(req, res.body(), p.kind);
 
+        } catch (Endpoint.Rejected e) {
+            req.failKind = "endpoint";
+            fail(req, e.getMessage());
         } catch (java.net.ConnectException e) {
-            failKind = "network";
-            fail("cannot reach the provider - no network, or a firewall is blocking the game");
+            req.failKind = "network";
+            fail(req, "cannot reach the provider - no network, or a firewall is blocking the game");
         } catch (java.net.UnknownHostException e) {
-            failKind = "network";
-            fail("cannot look up the provider's address - no network");
+            req.failKind = "network";
+            fail(req, "cannot look up the provider's address - no network");
         } catch (java.net.http.HttpTimeoutException e) {
-            failKind = "timeout";
-            fail("timed out waiting for the model");
+            req.failKind = "timeout";
+            fail(req, "timed out waiting for the model");
         } catch (Throwable t) {
-            fail(t.getClass().getSimpleName() + ": " + Config.redact(String.valueOf(t.getMessage())));
+            fail(req, t.getClass().getSimpleName() + ": " + Config.redact(String.valueOf(t.getMessage())));
         } finally {
             synchronized (LOCK) {
-                if (status == Status.STREAMING || status == Status.CONNECTING) status = Status.DONE;
-                long ms = System.currentTimeMillis() - startedAt;
-                Config.log("stream finished: status=" + status
-                        + " chars=" + full.length()
-                        + " in=" + inputTokens + " cacheRead=" + cacheRead
-                        + " cacheWrite=" + cacheWrite + " out=" + outputTokens
-                        + " ttft=" + (firstTokenAt > 0 ? (firstTokenAt - startedAt) : -1) + "ms"
+                finish(req);
+                long ms = System.currentTimeMillis() - req.startedAt;
+                Config.log("stream finished: status=" + req.status[0]
+                        + " chars=" + req.full.length()
+                        + " in=" + req.inputTokens + " req.cacheRead=" + req.cacheRead
+                        + " req.cacheWrite=" + req.cacheWrite + " out=" + req.outputTokens
+                        + " ttft=" + (req.firstTokenAt > 0 ? (req.firstTokenAt - req.startedAt) : -1) + "ms"
                         + " total=" + ms + "ms");
             }
         }
@@ -296,13 +413,13 @@ public final class Llm {
      * line - the payload carries its own "type", so relying on one source
      * rather than two removes a whole class of desync bug.
      */
-    private static void readSse(InputStream in, AtomicBoolean cancelled, String kind)
+    private static void readSse(Req req, InputStream in, String kind)
             throws Exception {
         if (!"anthropic".equals(kind)) {
-            readSseOther(in, cancelled, kind);
+            readSseOther(req, in, kind);
             return;
         }
-        readSseAnthropic(in, cancelled);
+        readSseAnthropic(req, in);
     }
 
     /**
@@ -313,29 +430,44 @@ public final class Llm {
      * candidates[0].content.parts[0].text, OpenAI at choices[0].delta.content.
      * OpenAI also sends a literal [DONE] sentinel, which Gemini does not.
      */
-    private static void readSseOther(InputStream in, AtomicBoolean cancelled, String kind)
+    private static void readSseOther(Req req, InputStream in, String kind)
             throws Exception {
         boolean gemini = "gemini".equals(kind);
+        int badEvents = 0;
         try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {
-                if (cancelled.get()) { Config.log("stream cancelled by player"); return; }
+                if (req.cancelled.get()) { Config.log("stream cancelled by player"); return; }
                 if (line.isEmpty() || !line.startsWith("data:")) continue;
                 String payload = line.substring(5).trim();
-                if (payload.isEmpty() || "[DONE]".equals(payload)) continue;
+                if (payload.isEmpty()) continue;
+                // "[DONE]" is the OpenAI protocol's end-of-stream sentinel and
+                // the only thing that makes an OpenAI-compatible stream
+                // complete. It was being skipped, so reaching it and reaching
+                // a dropped socket looked identical.
+                if ("[DONE]".equals(payload)) { req.sawTerminal = true; continue; }
 
                 Map<String, Object> ev;
                 try {
                     ev = JsonParse.parseObject(payload);
                 } catch (Throwable t) {
+                    // Do not skip malformed data indefinitely and then call the
+                    // result a success: a stream that is mostly garbage has not
+                    // delivered a page.
+                    if (++badEvents > MAX_BAD_EVENTS) {
+                        req.failKind = "protocol";
+                        fail(req, "the provider sent " + badEvents + " unreadable events; "
+                                + "giving up on this page");
+                        return;
+                    }
                     Config.log("skipped unparseable SSE payload (" + payload.length() + " bytes)");
                     continue;
                 }
 
                 Map<String, Object> err = JsonParse.map(ev, "error");
                 if (err != null) {
-                    failKind = kindOf(0, payload);
-                    fail("stream error: " + JsonParse.str(err, "message", payload));
+                    req.failKind = kindOf(0, payload);
+                    fail(req, "stream error: " + JsonParse.str(err, "message", payload));
                     return;
                 }
 
@@ -349,17 +481,38 @@ public final class Llm {
                             for (Object pobj : pl) {
                                 if (pobj instanceof Map<?, ?> pm) {
                                     String t = JsonParse.str(pm, "text", "");
-                                    if (!t.isEmpty()) append(t);
+                                    if (!t.isEmpty()) append(req, t);
                                 }
+                            }
+                        }
+                        // Gemini signals completion per candidate. STOP is the
+                        // only success; everything else - MAX_TOKENS, SAFETY,
+                        // RECITATION - means the page is not whole.
+                        String fr = JsonParse.str(c0, "finishReason", "");
+                        if (!fr.isEmpty()) {
+                            if ("STOP".equals(fr)) {
+                                req.sawTerminal = true;
+                            } else if ("MAX_TOKENS".equals(fr)) {
+                                req.failKind = "truncated";
+                                fail(req, "the model hit its output ceiling and the "
+                                        + "page was cut off, so nothing was saved. "
+                                        + "Lower the page length in SETUP, or raise "
+                                        + "maxTokens for this profile.");
+                                return;
+                            } else {
+                                req.failKind = "refused";
+                                fail(req, "the provider stopped this page early ("
+                                        + safeWord(fr) + ") and it was not saved");
+                                return;
                             }
                         }
                     }
                     Map<String, Object> um = JsonParse.map(ev, "usageMetadata");
                     if (um != null) {
                         synchronized (LOCK) {
-                            inputTokens  = JsonParse.num(um, "promptTokenCount", inputTokens);
-                            outputTokens = JsonParse.num(um, "candidatesTokenCount", outputTokens);
-                            cacheRead    = JsonParse.num(um, "cachedContentTokenCount", cacheRead);
+                            req.inputTokens  = JsonParse.num(um, "promptTokenCount", req.inputTokens);
+                            req.outputTokens = JsonParse.num(um, "candidatesTokenCount", req.outputTokens);
+                            req.cacheRead    = JsonParse.num(um, "cachedContentTokenCount", req.cacheRead);
                         }
                     }
                 } else {
@@ -369,14 +522,32 @@ public final class Llm {
                         Map<String, Object> d = JsonParse.map(c0, "delta");
                         if (d != null) {
                             String t = JsonParse.str(d, "content", "");
-                            if (!t.isEmpty()) append(t);
+                            if (!t.isEmpty()) append(req, t);
+                        }
+                        String fr = JsonParse.str(c0, "finish_reason", "");
+                        if (!fr.isEmpty()) {
+                            if ("stop".equals(fr)) {
+                                req.sawTerminal = true;
+                            } else if ("length".equals(fr)) {
+                                req.failKind = "truncated";
+                                fail(req, "the model hit its output ceiling and the "
+                                        + "page was cut off, so nothing was saved. "
+                                        + "Lower the page length in SETUP, or raise "
+                                        + "maxTokens for this profile.");
+                                return;
+                            } else {
+                                req.failKind = "refused";
+                                fail(req, "the provider stopped this page early ("
+                                        + safeWord(fr) + ") and it was not saved");
+                                return;
+                            }
                         }
                     }
                     Map<String, Object> u = JsonParse.map(ev, "usage");
                     if (u != null) {
                         synchronized (LOCK) {
-                            inputTokens  = JsonParse.num(u, "prompt_tokens", inputTokens);
-                            outputTokens = JsonParse.num(u, "completion_tokens", outputTokens);
+                            req.inputTokens  = JsonParse.num(u, "prompt_tokens", req.inputTokens);
+                            req.outputTokens = JsonParse.num(u, "completion_tokens", req.outputTokens);
                         }
                     }
                 }
@@ -384,11 +555,11 @@ public final class Llm {
         }
     }
 
-    private static void readSseAnthropic(InputStream in, AtomicBoolean cancelled) throws Exception {
+    private static void readSseAnthropic(Req req, InputStream in) throws Exception {
         try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = r.readLine()) != null) {
-                if (cancelled.get()) {
+                if (req.cancelled.get()) {
                     Config.log("stream cancelled by player");
                     return;
                 }
@@ -412,7 +583,7 @@ public final class Llm {
                         // are not page text and must not reach the paper.
                         if (d != null && "text_delta".equals(JsonParse.str(d, "type", ""))) {
                             String t = JsonParse.str(d, "text", "");
-                            if (!t.isEmpty()) append(t);
+                            if (!t.isEmpty()) append(req, t);
                         }
                     }
                     case "message_start" -> {
@@ -420,52 +591,116 @@ public final class Llm {
                         Map<String, Object> u = m == null ? null : JsonParse.map(m, "usage");
                         if (u != null) {
                             synchronized (LOCK) {
-                                inputTokens = JsonParse.num(u, "input_tokens", 0);
-                                cacheRead   = JsonParse.num(u, "cache_read_input_tokens", 0);
-                                cacheWrite  = JsonParse.num(u, "cache_creation_input_tokens", 0);
+                                req.inputTokens = JsonParse.num(u, "input_tokens", 0);
+                                req.cacheRead   = JsonParse.num(u, "cache_read_input_tokens", 0);
+                                req.cacheWrite  = JsonParse.num(u, "cache_creation_input_tokens", 0);
                             }
                         }
                     }
                     case "message_delta" -> {
                         Map<String, Object> u = JsonParse.map(ev, "usage");
                         if (u != null) {
-                            synchronized (LOCK) { outputTokens = JsonParse.num(u, "output_tokens", 0); }
+                            synchronized (LOCK) { req.outputTokens = JsonParse.num(u, "output_tokens", 0); }
                         }
                         // If the page hit the ceiling it was cut off, and the
                         // canon block will be missing. Say so rather than
                         // leaving a truncated page looking deliberate.
                         Map<String, Object> d2 = JsonParse.map(ev, "delta");
                         String stop = d2 == null ? "" : JsonParse.str(d2, "stop_reason", "");
+                        // A page cut off at the ceiling has lost its CANON
+                        // block and usually its last sentence. It used to be
+                        // logged as a warning and committed anyway; it is now
+                        // a hard failure, because a half page saved into the
+                        // book is worse than no page at all.
                         if ("max_tokens".equals(stop)) {
-                            Config.log("WARNING page hit the token ceiling and was cut short");
+                            req.failKind = "truncated";
+                            fail(req, "the model hit its output ceiling and the page "
+                                    + "was cut off mid-flow, so nothing was saved. "
+                                    + "Lower the page length in SETUP, or raise "
+                                    + "maxTokens for this profile.");
+                            return;
+                        }
+                        if (!stop.isEmpty() && !"end_turn".equals(stop)
+                                && !"stop_sequence".equals(stop)) {
+                            req.failKind = "refused";
+                            fail(req, "the model stopped early (" + safeWord(stop) + ")");
+                            return;
                         }
                     }
+                    case "message_stop" -> req.sawTerminal = true;
                     case "error" -> {
                         Map<String, Object> e = JsonParse.map(ev, "error");
-                        failKind = kindOf(0, payload);
-                        fail("stream error: " + (e == null ? payload : JsonParse.str(e, "message", payload)));
+                        req.failKind = kindOf(0, payload);
+                        fail(req, "stream error: " + (e == null ? payload : JsonParse.str(e, "message", payload)));
                         return;
                     }
-                    default -> { /* ping, message_stop, content_block_start/stop */ }
+                    default -> { /* ping, content_block_start/stop */ }
                 }
             }
         }
     }
 
-    private static void append(String t) {
+    /** Appends streamed text - but only if this request is still the active one. */
+    private static void append(Req req, String t) {
         synchronized (LOCK) {
-            if (firstTokenAt == 0) firstTokenAt = System.currentTimeMillis();
-            full.append(t);
-            pending.append(t);
+            if (active != req || req.isTerminal()) return;   // late bytes from a dead request
+            if (req.firstTokenAt == 0) req.firstTokenAt = System.currentTimeMillis();
+            req.full.append(t);
+            req.pending.append(t);
         }
     }
 
-    private static void fail(String msg) {
+    /** Caps the length and strips control characters from a provider token. */
+    private static String safeWord(String s) {
+        if (s == null) return "?";
+        String t = s.length() > 40 ? s.substring(0, 40) : s;
+        return t.replaceAll("[^A-Za-z0-9_.:-]", "?");
+    }
+
+    /**
+     * How many unreadable SSE events to tolerate before giving up.
+     *
+     * A handful is normal - providers send keep-alives and comment frames. A
+     * hundred means the stream is not what we think it is, and continuing
+     * would end in an EOF that looks like a clean finish.
+     */
+    private static final int MAX_BAD_EVENTS = 32;
+
+    private static void fail(Req req, String msg) {
         synchronized (LOCK) {
-            error = msg;
-            status = Status.ERROR;
+            if (active != req || req.isTerminal()) return;  // cancelled or done
+            req.error = msg;
+            req.status[0] = Status.ERROR;
         }
         Config.log("ERROR " + msg);
+    }
+
+    /**
+     * Called once the worker leaves the read loop.
+     *
+     * Reaching the end of the stream is NOT success. The finally block used to
+     * promote CONNECTING or STREAMING straight to DONE, so a dropped
+     * connection, an EOF mid-sentence or a malformed stream all finished as
+     * DONE and committed a partial page. A request is DONE only when the
+     * provider actually signalled completion - see Req.sawTerminal.
+     */
+    private static void finish(Req req) {
+        if (req.isTerminal()) return;
+        if (req.sawTerminal && req.full.length() > 0) {
+            req.status[0] = Status.DONE;
+            return;
+        }
+        req.status[0] = Status.ERROR;
+        if (req.error == null) {
+            if (req.full.length() == 0) {
+                req.failKind = "empty";
+                req.error = "the provider returned nothing at all";
+            } else {
+                req.failKind = "truncated";
+                req.error = "the stream ended before the page was finished ("
+                        + req.full.length() + " characters); nothing was saved";
+            }
+        }
     }
 
     /**
@@ -560,7 +795,7 @@ public final class Llm {
      * - so being frugal here buys us precisely nothing and risks the one
      * failure we already know is unrecoverable.
      */
-    private static final int THINKING_HEADROOM = 8000;
+    private static final int THINKING_HEADROOM_REMOVED = 0;   // see anthropicBody
 
     private static String trimSlash(String s) {
         return s.endsWith("/") ? s.substring(0, s.length() - 1) : s;
@@ -670,14 +905,26 @@ public final class Llm {
         boolean cache = !"off".equals(p.cacheTtl);
         String ttl = "1h".equals(p.cacheTtl) ? "1h" : null;
 
-        // The profile's maxTokens is the player's idea of how long a PAGE may
-        // run. It is not a reasoning budget, and applying it as one is what
-        // truncated the first Sonnet page.
-        int cap = Math.min(p.maxTokens, ceiling()) + THINKING_HEADROOM;
+        // maxTokens is the player's cap on VISIBLE output and is honoured
+        // exactly. Reasoning is a separate, opt-in budget: a model that thinks
+        // spends those tokens against the same max_tokens field, so the two are
+        // added only when the player has actually asked for thinking. The old
+        // code added a flat 8000 to every request, which meant a setting
+        // presented as a token limit was quietly 8000 higher than it said.
+        int visible = Math.min(p.maxTokens, ceiling());
+        int cap = visible + p.thinkingTokens;
 
         Json j = new Json().obj();
         j.put("model", p.model);
         j.put("max_tokens", cap);
+        if (p.thinkingTokens > 0) {
+            // The provider's documented field, rather than hoping a bigger
+            // max_tokens leaves room. Explicit, and visible in the log.
+            j.objKey("thinking");
+            j.put("type", "enabled");
+            j.put("budget_tokens", p.thinkingTokens);
+            j.endObj();
+        }
         j.put("stream", true);
 
         if (system != null && !system.isEmpty()) {
@@ -685,7 +932,7 @@ public final class Llm {
             // this campaign's fixed spine - identical on every page, so it hits
             // every time. The earlier design put it after the history, which
             // GROWS in the middle (canon, rooms seen, pages), so the prefix
-            // diverged on every request: cacheWrite every page, cacheRead never.
+            // diverged on every request: req.cacheWrite every page, req.cacheRead never.
             j.arrKey("system");
             j.obj();
             j.put("type", "text");

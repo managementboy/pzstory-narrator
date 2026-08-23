@@ -1,0 +1,36 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      # Unit tests. No Project Zomboid jars needed - anything that touches
+      # zombie.* is verified in-game instead, see dev/README.md.
+      - name: Unit tests
+        run: ./tools/test.sh
+
+      # Version integrity, jar contents, secret scan.
+      - name: Release verification
+        run: ./tools/verify.sh
+
+      - name: Shell syntax
+        run: for f in build.sh tools/*.sh; do bash -n "$f"; done
+
+      - name: Lua syntax
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          luac5.4 -p mod/42/media/lua/client/PZStory/PZStoryBook.lua
+          luac5.4 -p dev/PZStory_Probe.lua
+
+      - name: Trailing whitespace
+        run: |
+          if git grep -nI ' $' -- '*.java' '*.lua' '*.sh' '*.md'; then
+            echo "trailing whitespace above"; exit 1
+          fi
