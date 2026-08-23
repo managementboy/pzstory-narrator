@@ -203,23 +203,23 @@ public class StoryAPI {
                 history,                              // cached prefix
                 Prompt.userTurn(state, voice, change, Campaign.pageCount() == 0,
                         Delta.stillStanding(Campaign.lastState(), state)),
-                all -> {
+                (generation, all) -> {
                     // The completed text arrives as an argument. It used to be
                     // fetched with Llm.text(), which read whatever the global
                     // buffer held at the moment the callback ran - a later
                     // request could have replaced it.
-                    // Fixed on the first page only; setPremise ignores
-                    // any later attempt to overwrite it.
-                    Campaign.setPremise(Prompt.premise(all));
-                    Campaign.addPage(Prompt.title(all), Prompt.body(all), stamp);
-                    Campaign.addCanon(Prompt.canon(all));
-                    Campaign.addTodo(Prompt.todo(all), "story");
-                    // Directions are spent only on success: a failed request
-                    // must not silently swallow what the player asked for.
-                    Campaign.clearDirections();
-                    // Only on success: a failed page must not consume
-                    // the interval it never got to describe.
-                    Campaign.rememberState(stateNow);
+                    // All campaign consequences cross one generation check
+                    // and one persistence boundary. A save load cannot land
+                    // between the check and these mutations.
+                    Campaign.commitGeneratedPage(
+                            generation,
+                            Prompt.premise(all),
+                            Prompt.title(all),
+                            Prompt.body(all),
+                            stamp,
+                            Prompt.canon(all),
+                            Prompt.todo(all),
+                            stateNow);
                 });
         if (err != null) Config.log("requestStoryPage refused: " + err);
         return err;

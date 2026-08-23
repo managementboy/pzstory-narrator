@@ -130,7 +130,8 @@ public final class Llm {
         return start(system, "", user, null);
     }
 
-    public static String start(String system, String user, java.util.function.Consumer<String> onDone) {
+    public static String start(String system, String user,
+                               java.util.function.BiConsumer<Long, String> onDone) {
         return start(system, "", user, onDone);
     }
 
@@ -142,7 +143,8 @@ public final class Llm {
      * @param tail   the volatile part: the live state and the player's voice.
      *               Changes every call, so it must come last.
      * @param onDone run on the worker thread when the stream completes
-     *               successfully, receiving the completed text DIRECTLY.
+     *               successfully, receiving the campaign generation captured
+     *               for the request and the completed text DIRECTLY.
      *               Never run on error, cancellation, truncation, or after
      *               the campaign it was started for has been replaced. It is
      *               handed the text rather than calling Llm.text() so that a
@@ -150,7 +152,7 @@ public final class Llm {
      *               a callback that is already running.
      */
     public static String start(String system, String cached, String tail,
-                               java.util.function.Consumer<String> onDone) {
+                               java.util.function.BiConsumer<Long, String> onDone) {
         final String user = tail;
         final String prefix = cached;
         final Req req;
@@ -176,34 +178,39 @@ public final class Llm {
         POOL.submit(() -> {
             try {
                 run(req, p, system, prefix, user);
+                // Read the outcome under the lock, then decide outside it.
+                final boolean ok;
+                final String text;
+                synchronized (LOCK) {
+                    ok = active == req
+                            && req.status[0] == Status.DONE
+                            && req.full.length() > 0;
+                    text = req.full.toString();
+                }
+                if (!ok || onDone == null) return;
+
+                // This early check avoids parsing a completed response after a
+                // save change. It is deliberately NOT the correctness barrier:
+                // Campaign.commitGeneratedPage() repeats the check while
+                // holding Campaign's monitor, so reset() cannot fit between
+                // the check and the mutations.
+                if (req.generation != Campaign.generation()) {
+                    Config.log("dropping a finished page: the save changed while it"
+                            + " was being written (gen " + req.generation
+                            + " -> " + Campaign.generation() + ")");
+                    return;
+                }
+                if (!req.callbackRan.compareAndSet(false, true)) return; // at most once
+                try {
+                    onDone.accept(req.generation, text);
+                } catch (Throwable t) {
+                    Config.log("post-stream hook failed: " + t);
+                }
             } finally {
+                // The request slot includes its success commit. Releasing it
+                // before the callback let a successor snapshot a half-written
+                // campaign (page present, canon and state not yet present).
                 synchronized (LOCK) { workerBusy = false; }
-            }
-            // Read the outcome under the lock, then decide outside it.
-            final boolean ok;
-            final String text;
-            synchronized (LOCK) {
-                ok = active == req
-                        && req.status[0] == Status.DONE
-                        && req.full.length() > 0;
-                text = req.full.toString();
-            }
-            if (!ok || onDone == null) return;
-            // The campaign may have been swapped for another save while this
-            // request was in flight. Committing A's page into B's book is
-            // silent cross-save corruption, so the generation is rechecked
-            // here and again inside Campaign under its own lock.
-            if (req.generation != Campaign.generation()) {
-                Config.log("dropping a finished page: the save changed while it"
-                        + " was being written (gen " + req.generation
-                        + " -> " + Campaign.generation() + ")");
-                return;
-            }
-            if (!req.callbackRan.compareAndSet(false, true)) return;   // at most once
-            try {
-                onDone.accept(text);
-            } catch (Throwable t) {
-                Config.log("post-stream hook failed: " + t);
             }
         });
         return null;

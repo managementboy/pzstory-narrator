@@ -264,7 +264,13 @@ public final class Campaign {
 
     public static synchronized void addPage(String title, String text, String stamp) {
         load();
-        if (text == null || text.isBlank()) return;
+        if (!addPageInMemory(title, text, stamp)) return;
+        save();
+        Config.log("campaign: page " + PAGES.size() + " kept (" + text.length() + " chars)");
+    }
+
+    private static boolean addPageInMemory(String title, String text, String stamp) {
+        if (text == null || text.isBlank()) return false;
         // A page with no title shows as "NO PAGE" on the device and as a blank
         // line in the archive, which reads like the page itself failed. The
         // prompt asks for one; this makes sure the book always has something
@@ -273,13 +279,17 @@ public final class Campaign {
         if (t.isEmpty()) t = "Page " + (PAGES.size() + 1);
         PAGES.add(new Page(PAGES.size() + 1, t, text.trim(),
                 stamp == null ? "" : stamp));
-        save();
-        Config.log("campaign: page " + PAGES.size() + " kept (" + text.length() + " chars)");
+        return true;
     }
 
     public static synchronized void addCanon(List<String> entries) {
         if (entries == null || entries.isEmpty()) return;
         load();
+        if (addCanonInMemory(entries)) save();
+    }
+
+    private static boolean addCanonInMemory(List<String> entries) {
+        if (entries == null || entries.isEmpty()) return false;
         int before = CANON.size();
         for (String e : entries) {
             if (e == null) continue;
@@ -288,7 +298,7 @@ public final class Campaign {
             // permanent, so keep entries short and drop anything empty.
             if (s.length() > 2 && s.length() <= 300) CANON.add(s);
         }
-        if (CANON.size() != before) save();
+        return CANON.size() != before;
     }
 
     public static synchronized List<String> canon() {
@@ -487,6 +497,12 @@ public final class Campaign {
 
     public static synchronized boolean addTodo(String text, String source) {
         load();
+        if (!addTodoInMemory(text, source)) return false;
+        save();
+        return true;
+    }
+
+    private static boolean addTodoInMemory(String text, String source) {
         if (text == null) return false;
         String t = text.strip();
         if (t.isEmpty() || t.length() > 160) return false;
@@ -517,7 +533,48 @@ public final class Campaign {
         }
         if (TODO.size() >= 40) return false;
         TODO.add(enc(OPEN, source == null ? "player" : source, t));
+        return true;
+    }
+
+    /**
+     * Commits every consequence of one successful model response as a single
+     * campaign transaction.
+     *
+     * The expected generation is checked while this class' monitor is held.
+     * reset() uses the same monitor, so either this method finishes against the
+     * old save before reset begins, or reset wins and this method changes
+     * nothing. There is no check-then-act window and no partially committed
+     * page for a successor request to observe.
+     */
+    public static synchronized boolean commitGeneratedPage(
+            long expectedGeneration,
+            String premise,
+            String title,
+            String text,
+            String stamp,
+            List<String> canon,
+            String todo,
+            String state) {
+        if (GENERATION.get() != expectedGeneration) {
+            Config.log("campaign: dropping completed page for stale generation "
+                    + expectedGeneration + " (current " + GENERATION.get() + ")");
+            return false;
+        }
+        load();
+        if (text == null || text.isBlank()) return false;
+
+        if (PREMISE.isEmpty() && premise != null && !premise.isBlank()) {
+            PREMISE = premise.strip();
+        }
+        addPageInMemory(title, text, stamp);
+        addCanonInMemory(canon);
+        addTodoInMemory(todo, "story");
+        DIRECTIONS.clear();
+        LAST_STATE = Delta.keep(state);
         save();
+
+        Config.log("campaign: page " + PAGES.size() + " committed atomically ("
+                + text.length() + " chars, generation " + expectedGeneration + ")");
         return true;
     }
 
