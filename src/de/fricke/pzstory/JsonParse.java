@@ -31,6 +31,7 @@ public final class JsonParse {
      */
     private int depth;
     private static final int MAX_DEPTH = 200;
+    private static final int MAX_INPUT_CHARS = 32 * 1024 * 1024;
 
     private JsonParse(String s) {
         this.s = s;
@@ -39,6 +40,10 @@ public final class JsonParse {
 
     public static Object parse(String text) {
         if (text == null) throw new IllegalArgumentException("null json");
+        if (text.length() > MAX_INPUT_CHARS) {
+            throw new IllegalArgumentException(
+                    "json exceeds " + MAX_INPUT_CHARS + " characters");
+        }
         // Strip UTF-8 BOM if Notepad left one.
         if (!text.isEmpty() && text.charAt(0) == '﻿') text = text.substring(1);
         JsonParse p = new JsonParse(text);
@@ -124,7 +129,12 @@ public final class JsonParse {
             if (i >= s.length()) throw new IllegalStateException("unterminated string");
             char c = s.charAt(i++);
             if (c == '"') return sb.toString();
+            if (c < 0x20) {
+                throw new IllegalStateException(
+                        "unescaped control character at offset " + (i - 1));
+            }
             if (c != '\\') { sb.append(c); continue; }
+            if (i >= s.length()) throw new IllegalStateException("unterminated escape");
             char e = s.charAt(i++);
             switch (e) {
                 case '"'  -> sb.append('"');
@@ -136,7 +146,16 @@ public final class JsonParse {
                 case 'r'  -> sb.append('\r');
                 case 't'  -> sb.append('\t');
                 case 'u'  -> {
-                    sb.append((char) Integer.parseInt(s.substring(i, i + 4), 16));
+                    if (i + 4 > s.length()) {
+                        throw new IllegalStateException("incomplete unicode escape at offset " + i);
+                    }
+                    int code;
+                    try {
+                        code = Integer.parseInt(s.substring(i, i + 4), 16);
+                    } catch (NumberFormatException badHex) {
+                        throw new IllegalStateException("bad unicode escape at offset " + i);
+                    }
+                    sb.append((char) code);
                     i += 4;
                 }
                 default -> throw new IllegalStateException("bad escape \\" + e);
@@ -146,14 +165,49 @@ public final class JsonParse {
 
     private Double number() {
         int start = i;
-        if (peek() == '-' || peek() == '+') i++;
-        while (i < s.length()) {
-            char c = s.charAt(i);
-            if ((c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+') i++;
-            else break;
+        if (peek() == '-') i++;
+
+        if (i >= s.length()) throw badNumber(start);
+        if (s.charAt(i) == '0') {
+            i++;
+            if (i < s.length() && digit(s.charAt(i))) throw badNumber(start);
+        } else if (s.charAt(i) >= '1' && s.charAt(i) <= '9') {
+            while (i < s.length() && digit(s.charAt(i))) i++;
+        } else {
+            throw badNumber(start);
         }
-        if (start == i) throw new IllegalStateException("expected a value at offset " + i);
-        return Double.valueOf(s.substring(start, i));
+
+        if (i < s.length() && s.charAt(i) == '.') {
+            i++;
+            if (i >= s.length() || !digit(s.charAt(i))) throw badNumber(start);
+            while (i < s.length() && digit(s.charAt(i))) i++;
+        }
+
+        if (i < s.length() && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {
+            i++;
+            if (i < s.length() && (s.charAt(i) == '+' || s.charAt(i) == '-')) i++;
+            if (i >= s.length() || !digit(s.charAt(i))) throw badNumber(start);
+            while (i < s.length() && digit(s.charAt(i))) i++;
+        }
+
+        Double value;
+        try {
+            value = Double.valueOf(s.substring(start, i));
+        } catch (NumberFormatException malformed) {
+            throw badNumber(start);
+        }
+        if (!Double.isFinite(value)) {
+            throw new IllegalStateException("number is not finite at offset " + start);
+        }
+        return value;
+    }
+
+    private static boolean digit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    private static IllegalStateException badNumber(int offset) {
+        return new IllegalStateException("invalid number at offset " + offset);
     }
 
     private void expect(String lit) {
