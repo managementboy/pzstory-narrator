@@ -36,6 +36,10 @@ public final class Config {
         public final String apiKey;
         public final String baseUrl;     // null for anthropic (fixed endpoint)
         public final int maxTokens;
+        /** Total prompt characters accepted before a request is started. */
+        public final int maxInputChars;
+        /** UTF-8 request-body ceiling after provider-specific JSON encoding. */
+        public final int maxRequestBytes;
         /** Extra budget for model reasoning. 0 disables it. See profiles.json docs. */
         public final int thinkingTokens;
         public final String systemMode;  // native | prepend_to_user | both
@@ -50,6 +54,14 @@ public final class Config {
             // Clamped, not trusted. A negative or absurd value from a
             // hand-edited profiles.json would otherwise reach the provider.
             this.maxTokens = clamp(JsonParse.num(m, "maxTokens", 2000), 256, 32000);
+            // Input is billable too, and a campaign grows for as long as its
+            // save exists. Never let "hosted models get the whole book" mean
+            // an unlimited request. These are user-tunable soft ceilings under
+            // hard implementation maxima.
+            this.maxInputChars = clamp(
+                    JsonParse.num(m, "maxInputChars", 300000), 24000, 1000000);
+            this.maxRequestBytes = clamp(
+                    JsonParse.num(m, "maxRequestBytes", 1000000), 131072, 2000000);
             // Reasoning budget, OFF by default and never applied implicitly.
             // Anthropic bills thinking tokens against max_tokens, so the old
             // code added 8000 to whatever the player had configured - a cap
@@ -75,7 +87,8 @@ public final class Config {
                     : apiKey.contains("PASTE") ? "PLACEHOLDER - not filled in"
                     : "key set (" + apiKey.length() + " chars)";
             return name + " [" + kind + "] model=" + model
-                    + " maxTokens=" + maxTokens + " " + keyState;
+                    + " maxTokens=" + maxTokens
+                    + " maxInputChars=" + maxInputChars + " " + keyState;
         }
     }
 

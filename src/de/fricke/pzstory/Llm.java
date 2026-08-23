@@ -179,6 +179,13 @@ public final class Llm {
             if (p == null) return "no active profile - check profiles.json";
             if (!p.usable()) return "profile '" + p.name + "' is not usable: " + p.describe();
 
+            long inputChars = (long) length(system) + length(cached) + length(tail);
+            if (inputChars > p.maxInputChars) {
+                return "prompt is " + inputChars + " characters, above profile '"
+                        + p.name + "' limit of " + p.maxInputChars
+                        + "; reduce history or raise maxInputChars deliberately";
+            }
+
             req = new Req(SEQ.incrementAndGet(), Campaign.generation());
             active = req;
             workerBusy = true;
@@ -362,11 +369,24 @@ public final class Llm {
                 }
             }
 
+            byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+            if (bodyBytes.length > p.maxRequestBytes) {
+                req.failKind = "request_too_large";
+                fail(req, "encoded request is " + bodyBytes.length
+                        + " bytes, above profile '" + p.name + "' limit of "
+                        + p.maxRequestBytes + "; reduce history or raise "
+                        + "maxRequestBytes deliberately");
+                return;
+            }
+
             HttpRequest httpReq = rb
-                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
                     .build();
 
-            Config.log("request -> " + p.kind + "/" + p.model + " (" + body.length() + " bytes)");
+            Config.log("request -> " + p.kind + "/" + p.model + " ("
+                    + bodyBytes.length + " bytes, "
+                    + ((long) length(system) + length(prefix) + length(user))
+                    + " prompt chars)");
 
             HttpResponse<InputStream> res =
                     client().send(httpReq, HttpResponse.BodyHandlers.ofInputStream());
@@ -901,6 +921,10 @@ public final class Llm {
     private static int ceiling() {
         int words = Settings.words();
         return Math.max(1500, (int) (words * 2.6) + 160);
+    }
+
+    private static int length(String s) {
+        return s == null ? 0 : s.length();
     }
 
     /**

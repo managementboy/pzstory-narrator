@@ -833,11 +833,10 @@ public final class Campaign {
      * Everything written so far, for the prompt.
      *
      * A 300-word page is about 400 tokens, so thirty chapters is ~12k and even
-     * three hundred is ~120k - comfortably inside a modern context. We include
-     * the whole book rather than summarising, and only trim for profiles that
-     * declare a small budget (local models). Trimming drops the OLDEST pages,
-     * because recent events matter more to the next page than the first day
-     * does - and canon carries the durable facts forward regardless.
+     * three hundred is ~120k. Every profile now declares an input budget: paid
+     * input and model context are finite even when the model is hosted. Within
+     * that budget we retain the newest pages; recent events matter more to the
+     * next page than the first day does, while canon carries durable facts.
      *
      * @param charBudget approximate characters allowed, or <= 0 for unlimited.
      */
@@ -884,7 +883,17 @@ public final class Campaign {
                 sb.append('\n').append(p.text).append("\n\n");
             }
         }
-        return sb.toString();
+        String out = sb.toString();
+        if (charBudget > 0 && out.length() > charBudget) {
+            String marker = "(older history omitted to respect the profile's input limit)\n\n";
+            if (charBudget <= marker.length()) return "";
+            // The end contains the newest pages. Canon may be clipped here
+            // only when it alone has grown beyond the entire request budget;
+            // retaining recent events is safer than rejecting every future
+            // page with an oversized prompt.
+            return marker + out.substring(out.length() - (charBudget - marker.length()));
+        }
+        return out;
     }
 
     /** Archive listing for the book's page selector. */
