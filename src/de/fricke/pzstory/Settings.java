@@ -1,9 +1,7 @@
 package de.fricke.pzstory;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Map;
 
 /**
@@ -112,11 +110,7 @@ public final class Settings {
             j.put("nudge", nudge);
             j.put("doom", doom);
             j.endObj();
-            Path p = file();
-            Files.createDirectories(p.getParent());
-            Path tmp = p.resolveSibling("settings.json.tmp");
-            Files.write(tmp, j.toString().getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp, p, StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.writeUtf8(file(), j.toString());
         } catch (Throwable t) {
             Config.log("settings: SAVE FAILED - " + t);
         }

@@ -1,10 +1,8 @@
 package de.fricke.pzstory;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -269,13 +267,12 @@ public final class Campaign {
         return out;
     }
 
-    private static synchronized void save() {
+    private static synchronized boolean save() {
         if (persistenceBlocked) {
             Config.log("campaign: SAVE REFUSED - unreadable store was not preserved");
-            return;
+            return false;
         }
         try {
-            Files.createDirectories(root());
             Json j = new Json().obj();
             j.put("schema", 1);
             j.arrKey("canon");
@@ -315,14 +312,11 @@ public final class Campaign {
             j.endArr();
             j.endObj();
 
-            // Atomic: a page half-written by a crash would poison every later
-            // prompt, and the player would never know why the story drifted.
-            Path tmp = root().resolve("campaign.json.tmp");
-            Files.write(tmp, j.toString().getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp, root().resolve("campaign.json"),
-                    StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.writeUtf8(root().resolve("campaign.json"), j.toString());
+            return true;
         } catch (Throwable t) {
             Config.log("campaign: SAVE FAILED - " + t);
+            return false;
         }
     }
 
@@ -648,11 +642,12 @@ public final class Campaign {
         addTodoInMemory(todo, "story");
         DIRECTIONS.clear();
         LAST_STATE = Delta.keep(state);
-        save();
+        boolean stored = save();
 
         Config.log("campaign: page " + PAGES.size() + " committed atomically ("
-                + text.length() + " chars, generation " + expectedGeneration + ")");
-        return true;
+                + text.length() + " chars, generation " + expectedGeneration
+                + (stored ? ")" : ", memory only - disk write failed)"));
+        return stored;
     }
 
     public static synchronized void toggleTodo(int oneBased) {
