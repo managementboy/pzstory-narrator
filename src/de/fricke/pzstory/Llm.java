@@ -285,10 +285,10 @@ public final class Llm {
             if (r.retryAfter > 0) j.put("retryAfter", r.retryAfter);
             if (r.startedAt > 0) j.put("elapsedMs", System.currentTimeMillis() - r.startedAt);
             if (r.firstTokenAt > 0) j.put("firstTokenMs", r.firstTokenAt - r.startedAt);
-            if (r.inputTokens > 0) j.put("req.inputTokens", r.inputTokens);
-            if (r.cacheRead > 0) j.put("req.cacheRead", r.cacheRead);
-            if (r.cacheWrite > 0) j.put("req.cacheWrite", r.cacheWrite);
-            if (r.outputTokens > 0) j.put("req.outputTokens", r.outputTokens);
+            if (r.inputTokens > 0) j.put("inputTokens", r.inputTokens);
+            if (r.cacheRead > 0) j.put("cacheRead", r.cacheRead);
+            if (r.cacheWrite > 0) j.put("cacheWrite", r.cacheWrite);
+            if (r.outputTokens > 0) j.put("outputTokens", r.outputTokens);
             return j.endObj().toString();
         }
     }

@@ -77,7 +77,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "2"
+local NEEDS_API = "3"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -153,6 +153,170 @@ local function asciify(s)
     s = s:gsub("\194\160", " ")          -- non-breaking space
     return s
 end
+
+-- -------------------------------------------------------------------- JSON
+-- Java returns JSON because Kahlua does not preserve ordinary Java collection
+-- types reliably across versions. JSON is a grammar, not a regular language:
+-- braces and escaped quotes inside player/model text made the former gmatch()
+-- extraction split valid records. Keep one strict decoder at the boundary.
+local JSON_NULL = {}
+
+local function jsonUtf8(cp)
+    if cp <= 0x7F then return string.char(cp) end
+    if cp <= 0x7FF then
+        return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + (cp % 0x40))
+    end
+    if cp <= 0xFFFF then
+        return string.char(0xE0 + math.floor(cp / 0x1000),
+            0x80 + (math.floor(cp / 0x40) % 0x40), 0x80 + (cp % 0x40))
+    end
+    return string.char(0xF0 + math.floor(cp / 0x40000),
+        0x80 + (math.floor(cp / 0x1000) % 0x40),
+        0x80 + (math.floor(cp / 0x40) % 0x40), 0x80 + (cp % 0x40))
+end
+
+local function jsonDecode(text)
+    if type(text) ~= "string" then error("JSON input is not a string") end
+    if #text > 2 * 1024 * 1024 then error("JSON input is too large") end
+    local at, depth = 1, 0
+
+    local function fail(message)
+        error(message .. " at byte " .. at)
+    end
+    local function ws()
+        while true do
+            local c = text:sub(at, at)
+            if c == " " or c == "\t" or c == "\r" or c == "\n" then at = at + 1
+            else return end
+        end
+    end
+    local function hex4()
+        local h = text:sub(at, at + 3)
+        if #h ~= 4 or not h:match("^[0-9A-Fa-f]+$") then fail("bad unicode escape") end
+        at = at + 4
+        return tonumber(h, 16)
+    end
+    local function str()
+        if text:sub(at, at) ~= '"' then fail("expected string") end
+        at = at + 1
+        local out = {}
+        while at <= #text do
+            local c = text:sub(at, at)
+            at = at + 1
+            if c == '"' then return table.concat(out) end
+            if c == "\\" then
+                local e = text:sub(at, at)
+                at = at + 1
+                local simple = { ['"']='"', ['\\']='\\', ['/']='/',
+                    b='\b', f='\f', n='\n', r='\r', t='\t' }
+                if simple[e] ~= nil then
+                    table.insert(out, simple[e])
+                elseif e == "u" then
+                    local cp = hex4()
+                    if cp >= 0xD800 and cp <= 0xDBFF then
+                        if text:sub(at, at + 1) ~= "\\u" then fail("unpaired high surrogate") end
+                        at = at + 2
+                        local low = hex4()
+                        if low < 0xDC00 or low > 0xDFFF then fail("bad low surrogate") end
+                        cp = 0x10000 + (cp - 0xD800) * 0x400 + (low - 0xDC00)
+                    elseif cp >= 0xDC00 and cp <= 0xDFFF then
+                        fail("unpaired low surrogate")
+                    end
+                    table.insert(out, jsonUtf8(cp))
+                else
+                    fail("bad string escape")
+                end
+            else
+                if c:byte() < 0x20 then fail("control character in string") end
+                table.insert(out, c)
+            end
+        end
+        fail("unterminated string")
+    end
+
+    local value
+    local function numberValue()
+        local start = at
+        if text:sub(at, at) == "-" then at = at + 1 end
+        local first = text:sub(at, at)
+        if first == "0" then
+            at = at + 1
+        elseif first:match("[1-9]") then
+            repeat at = at + 1 until not text:sub(at, at):match("%d")
+        else
+            fail("bad number")
+        end
+        if text:sub(at, at) == "." then
+            at = at + 1
+            if not text:sub(at, at):match("%d") then fail("bad fraction") end
+            repeat at = at + 1 until not text:sub(at, at):match("%d")
+        end
+        local e = text:sub(at, at)
+        if e == "e" or e == "E" then
+            at = at + 1
+            local sign = text:sub(at, at)
+            if sign == "+" or sign == "-" then at = at + 1 end
+            if not text:sub(at, at):match("%d") then fail("bad exponent") end
+            repeat at = at + 1 until not text:sub(at, at):match("%d")
+        end
+        local n = tonumber(text:sub(start, at - 1))
+        if n == nil then fail("bad number") end
+        return n
+    end
+
+    value = function()
+        ws()
+        local c = text:sub(at, at)
+        if c == '"' then return str() end
+        if c == "-" or c:match("%d") then return numberValue() end
+        if text:sub(at, at + 3) == "true" then at = at + 4; return true end
+        if text:sub(at, at + 4) == "false" then at = at + 5; return false end
+        if text:sub(at, at + 3) == "null" then at = at + 4; return JSON_NULL end
+        if c ~= "{" and c ~= "[" then fail("expected value") end
+
+        depth = depth + 1
+        if depth > 100 then fail("JSON nested too deeply") end
+        local result = {}
+        at = at + 1
+        ws()
+        local close = c == "{" and "}" or "]"
+        if text:sub(at, at) == close then at = at + 1; depth = depth - 1; return result end
+        local index = 1
+        while true do
+            if c == "{" then
+                ws()
+                local key = str()
+                ws()
+                if text:sub(at, at) ~= ":" then fail("expected colon") end
+                at = at + 1
+                result[key] = value()
+            else
+                result[index] = value()
+                index = index + 1
+            end
+            ws()
+            local sep = text:sub(at, at)
+            if sep == close then at = at + 1; depth = depth - 1; return result end
+            if sep ~= "," then fail("expected comma or closing bracket") end
+            at = at + 1
+        end
+    end
+
+    local result = value()
+    ws()
+    if at <= #text then fail("trailing JSON data") end
+    return result
+end
+
+local function decodeObject(raw)
+    local ok, result = pcall(jsonDecode, raw)
+    if ok and type(result) == "table" then return result end
+    return nil
+end
+
+-- The optional development probe is a separate Lua file. Publish the decoder
+-- so it does not reintroduce regex extraction for streamed JSON.
+PZStoryJSONDecode = jsonDecode
 
 local function rgb(self, x, y, w, h, c, a)
     self:drawRect(x, y, w, h, a or 1.0, c[1], c[2], c[3])
@@ -574,14 +738,13 @@ function PZStoryBook:refreshTasks()
     if f == nil then return end
     local raw
     if not pcall(function() raw = f() end) or raw == nil then return end
-    for blk in raw:gmatch("{(.-)}") do
-        local done  = blk:match('"done":(%a+)') == "true"
-        local later = blk:match('"later":(%a+)') == "true"
-        local src  = blk:match('"source":"(.-)"') or "player"
-        local txt  = blk:match('"text":"(.-)"') or ""
-        txt = txt:gsub('\\"', '"'):gsub("\\\\", "\\")
-        if txt ~= "" then
-            table.insert(self.tasks, { done = done, later = later, src = src, text = txt })
+    local data = decodeObject(raw)
+    if data == nil or type(data.todo) ~= "table" then return end
+    for _, row in ipairs(data.todo) do
+        if type(row) == "table" and type(row.text) == "string" and row.text ~= "" then
+            table.insert(self.tasks, { done = row.done == true, later = row.later == true,
+                src = type(row.source) == "string" and row.source or "player",
+                text = row.text })
         end
     end
 end
@@ -746,14 +909,15 @@ function PZStoryBook:openChooser()
     if f == nil then return end
     local raw
     if not pcall(function() raw = f() end) or raw == nil then return end
-    for blk in raw:gmatch("{(.-)}") do
-        local id    = blk:match('"id":"(.-)"')
-        local key   = blk:match('"key":"(.-)"')
-        local name  = blk:match('"name":"(.-)"')
-        local pitch = blk:match('"pitch":"(.-)"')
-        if id then
+    local data = decodeObject(raw)
+    if data == nil or type(data.scenarios) ~= "table" then return end
+    for _, row in ipairs(data.scenarios) do
+        if type(row) == "table" and type(row.id) == "string" then
             table.insert(self.kinds,
-                { id = id, key = key or "?", name = name or id, pitch = pitch or "" })
+                { id = row.id,
+                  key = type(row.key) == "string" and row.key or "?",
+                  name = type(row.name) == "string" and row.name or row.id,
+                  pitch = type(row.pitch) == "string" and row.pitch or "" })
         end
     end
     self.statusLine = "pick the kind of story this will be"
@@ -863,13 +1027,15 @@ function PZStoryBook:refreshSettings()
     if f == nil then return end
     local raw
     if not pcall(function() raw = f() end) or raw == nil then return end
-    self.cfg.knowledge = tonumber(raw:match('"knowledge":(%d+)')) or 3
-    self.cfg.words     = tonumber(raw:match('"words":(%d+)')) or 200
-    self.cfg.pause     = (raw:match('"pause":(%a+)') == "true")
-    self.cfg.nudge     = tonumber(raw:match('"nudge":(%d+)')) or 2
-    self.cfg.doom      = tonumber(raw:match('"doom":(%d+)')) or 3
-    self.cfg.profile   = raw:match('"profile":"(.-)"') or "?"
-    self.cfg.model     = raw:match('"model":"(.-)"') or ""
+    local data = decodeObject(raw)
+    if data == nil then return end
+    self.cfg.knowledge = tonumber(data.knowledge) or 3
+    self.cfg.words     = tonumber(data.words) or 200
+    self.cfg.pause     = data.pause == true
+    self.cfg.nudge     = tonumber(data.nudge) or 2
+    self.cfg.doom      = tonumber(data.doom) or 3
+    self.cfg.profile   = type(data.profile) == "string" and data.profile or "?"
+    self.cfg.model     = type(data.model) == "string" and data.model or ""
 end
 
 --- Cycles one setting to its next value and writes it through immediately.
@@ -972,9 +1138,10 @@ function PZStoryBook:refreshStanding()
     if f == nil then return end
     local raw
     if not pcall(function() raw = f() end) or raw == nil then return end
-    local block = raw:match('"standing":%[(.-)%]') or ""
-    for s in block:gmatch('"(.-)"') do
-        table.insert(self.standing, (s:gsub("\\\"", '"'):gsub("\\\\", "\\")))
+    local data = decodeObject(raw)
+    if data == nil or type(data.standing) ~= "table" then return end
+    for _, text in ipairs(data.standing) do
+        if type(text) == "string" then table.insert(self.standing, text) end
     end
 end
 
@@ -1567,11 +1734,15 @@ function PZStoryBook:step(dir)
 
     local raw
     if not pcall(function() raw = pageFn(n) end) or raw == nil then return end
+    local page = decodeObject(raw)
+    if page == nil then
+        self.statusLine = "could not read that stored page"
+        return
+    end
     self.viewing   = n
-    self.pageTitle = raw:match('"title":"(.-)"') or ""
-    self.pageText  = (raw:match('"text":"(.-)","stamp"') or "")
-                        :gsub("\\n", "\n"):gsub('\\"', '"'):gsub("\\\\", "\\")
-    local stamp    = raw:match('"stamp":"(.-)"') or ""
+    self.pageTitle = type(page.title) == "string" and page.title or ""
+    self.pageText  = type(page.text) == "string" and page.text or ""
+    local stamp    = type(page.stamp) == "string" and page.stamp or ""
     self.scroll    = 0
     self.statusLine = string.format("page %d of %d   %s", n, count, stamp)
 end
@@ -1673,16 +1844,22 @@ function PZStoryBook:drain()
         return
     end
 
-    local status  = raw:match('"status":"(%a+)"')
-    local done    = raw:match('"done":(%a+)')
-    local err     = raw:match('"error":"(.-)"[,}]')
-    local chars   = tonumber(raw:match('"chars":(%d+)')) or 0
-    local elapsed = tonumber(raw:match('"elapsedMs":(%d+)')) or 0
-    local inTok   = raw:match('"inputTokens":(%d+)')
-    local outTok  = raw:match('"outputTokens":(%d+)')
-    local cRead   = tonumber(raw:match('"cacheRead":(%d+)')) or 0
-    local cWrite  = tonumber(raw:match('"cacheWrite":(%d+)')) or 0
-    local delta   = raw:match('"delta":"(.-)","chars"')
+    local data = decodeObject(raw)
+    if data == nil then
+        self.streaming = false
+        self.statusLine = "the pen returned an unreadable status"
+        return
+    end
+    local status  = data.status
+    local done    = data.done == true
+    local err     = data.error
+    local chars   = tonumber(data.chars) or 0
+    local elapsed = tonumber(data.elapsedMs) or 0
+    local inTok   = data.inputTokens
+    local outTok  = data.outputTokens
+    local cRead   = tonumber(data.cacheRead) or 0
+    local cWrite  = tonumber(data.cacheWrite) or 0
+    local delta   = data.delta
 
     if delta and delta ~= "" then self.chunks = self.chunks + 1 end
 
@@ -1702,7 +1879,7 @@ function PZStoryBook:drain()
         self.statusLine = string.format("writing  %d chars  %.1fs", chars, elapsed / 1000)
     end
 
-    if done == "true" then
+    if done then
         self.streaming = false
         -- Back to the beginning. The view follows the writing while it
         -- streams, which is the right behaviour mid-flight and exactly the
@@ -1710,8 +1887,8 @@ function PZStoryBook:drain()
         -- top, and leaving it at the bottom reads as "the start got cut off".
         self.scroll = 0
         if err then
-            local kind  = raw:match('"failKind":"(%a+)"') or "unknown"
-            local wait  = tonumber(raw:match('"retryAfter":(%d+)')) or 0
+            local kind  = type(data.failKind) == "string" and data.failKind or "unknown"
+            local wait  = tonumber(data.retryAfter) or 0
             self:showFault(kind, wait, err)
         else
             -- Show what the cache did: "cached 4.2k" means that much of the

@@ -73,29 +73,27 @@ local function onTick()
     if not stream.running then return end
     stream.ticks = stream.ticks + 1
 
-    local raw
-    local ok = pcall(function() raw = PZStory.pollStream() end)
-    if not ok or raw == nil then
+    local raw, data
+    local ok = pcall(function()
+        raw = PZStory.pollStream()
+        data = PZStoryJSONDecode(raw)
+    end)
+    if not ok or raw == nil or type(data) ~= "table" then
         stream.running = false
         say("poll failed - giving up")
         return
     end
 
-    -- The Java side hands back JSON. Rather than add a Lua JSON parser for
-    -- three fields, pull them out directly; the producer is ours and the
-    -- shape is fixed.
-    local delta = raw:match('"delta":"(.-)","chars"')
-    local done  = raw:match('"done":(%a+)')
-    local err   = raw:match('"error":"(.-)"}') or raw:match('"error":"(.-)",')
+    local delta = data.delta
+    local done  = data.done == true
+    local err   = data.error
 
     if delta and delta ~= "" then
         stream.chunks = stream.chunks + 1
-        -- Unescape the few sequences our writer emits.
-        delta = delta:gsub("\\n", "\n"):gsub('\\"', '"'):gsub("\\\\", "\\")
         stream.text = stream.text .. delta
     end
 
-    if done == "true" then
+    if done then
         stream.running = false
         if err then
             print("[PZStoryStream] FAILED: " .. tostring(err))
