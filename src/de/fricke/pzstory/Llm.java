@@ -1,6 +1,9 @@
 package de.fricke.pzstory;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -26,6 +29,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * One request in flight at a time - a page at a time is the whole interaction.
  */
 public final class Llm {
+
+    /** Provider-controlled input limits. These are hard safety ceilings. */
+    private static final int MAX_ERROR_BYTES  = 64 * 1024;
+    private static final int MAX_SSE_BYTES    = 2 * 1024 * 1024;
+    private static final int MAX_SSE_LINE     = 256 * 1024;
+    private static final int MAX_OUTPUT_CHARS = 128 * 1024;
 
     public enum Status { IDLE, CONNECTING, STREAMING, DONE, ERROR, CANCELLED }
 
@@ -363,7 +372,10 @@ public final class Llm {
                     client().send(httpReq, HttpResponse.BodyHandlers.ofInputStream());
 
             if (res.statusCode() != 200) {
-                String errBody = new String(res.body().readAllBytes(), StandardCharsets.UTF_8);
+                String errBody;
+                try (InputStream errorStream = res.body()) {
+                    errBody = readUtf8Bounded(errorStream, MAX_ERROR_BYTES);
+                }
                 int code = res.statusCode();
                 req.failKind = kindOf(code, errBody);
                 req.retryAfter = retryAfter(res, errBody);
@@ -392,6 +404,9 @@ public final class Llm {
         } catch (java.net.http.HttpTimeoutException e) {
             req.failKind = "timeout";
             fail(req, "timed out waiting for the model");
+        } catch (ResponseTooLarge e) {
+            req.failKind = "too_large";
+            fail(req, e.getMessage());
         } catch (Throwable t) {
             fail(req, t.getClass().getSimpleName() + ": " + Config.redact(String.valueOf(t.getMessage())));
         } finally {
@@ -441,9 +456,12 @@ public final class Llm {
             throws Exception {
         boolean gemini = "gemini".equals(kind);
         int badEvents = 0;
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+        try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
+                     "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
+             BufferedReader r = new BufferedReader(
+                     new InputStreamReader(limited, StandardCharsets.UTF_8))) {
             String line;
-            while ((line = r.readLine()) != null) {
+            while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
                 if (req.cancelled.get()) { Config.log("stream cancelled by player"); return; }
                 if (line.isEmpty() || !line.startsWith("data:")) continue;
                 String payload = line.substring(5).trim();
@@ -563,9 +581,12 @@ public final class Llm {
     }
 
     private static void readSseAnthropic(Req req, InputStream in) throws Exception {
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+        try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
+                     "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
+             BufferedReader r = new BufferedReader(
+                     new InputStreamReader(limited, StandardCharsets.UTF_8))) {
             String line;
-            while ((line = r.readLine()) != null) {
+            while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
                 if (req.cancelled.get()) {
                     Config.log("stream cancelled by player");
                     return;
@@ -649,11 +670,21 @@ public final class Llm {
 
     /** Appends streamed text - but only if this request is still the active one. */
     private static void append(Req req, String t) {
+        boolean tooLarge = false;
         synchronized (LOCK) {
             if (active != req || req.isTerminal()) return;   // late bytes from a dead request
-            if (req.firstTokenAt == 0) req.firstTokenAt = System.currentTimeMillis();
-            req.full.append(t);
-            req.pending.append(t);
+            if (req.full.length() + t.length() > MAX_OUTPUT_CHARS) {
+                req.failKind = "too_large";
+                tooLarge = true;
+            } else {
+                if (req.firstTokenAt == 0) req.firstTokenAt = System.currentTimeMillis();
+                req.full.append(t);
+                req.pending.append(t);
+            }
+        }
+        if (tooLarge) {
+            fail(req, "the provider produced more than " + MAX_OUTPUT_CHARS
+                    + " characters; the page was discarded");
         }
     }
 
@@ -672,6 +703,88 @@ public final class Llm {
      * would end in an EOF that looks like a clean finish.
      */
     private static final int MAX_BAD_EVENTS = 32;
+
+    /** A checked failure used for every provider-controlled size ceiling. */
+    private static final class ResponseTooLarge extends IOException {
+        ResponseTooLarge(String message) { super(message); }
+    }
+
+    /**
+     * Enforces a byte budget before BufferedReader or a byte accumulator gets
+     * a chance to allocate from an untrusted response. One probe byte beyond
+     * the limit distinguishes an exact-length response from an oversized one.
+     */
+    private static final class LimitedInputStream extends FilterInputStream {
+        private int remaining;
+        private final String message;
+
+        LimitedInputStream(InputStream in, int limit, String message) {
+            super(in);
+            this.remaining = limit;
+            this.message = message;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining == 0) {
+                int probe = super.read();
+                if (probe < 0) return -1;
+                throw new ResponseTooLarge(message);
+            }
+            int value = super.read();
+            if (value >= 0) remaining--;
+            return value;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (remaining == 0) return read();
+            int n = super.read(b, off, Math.min(len, remaining));
+            if (n > 0) remaining -= n;
+            return n;
+        }
+    }
+
+    private static String readUtf8Bounded(InputStream in, int maxBytes)
+            throws IOException {
+        try (InputStream limited = new LimitedInputStream(in, maxBytes,
+                "the provider error response exceeded " + maxBytes + " bytes");
+             ByteArrayOutputStream out = new ByteArrayOutputStream(
+                     Math.min(maxBytes, 8192))) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = limited.read(buf)) >= 0) {
+                if (n > 0) out.write(buf, 0, n);
+            }
+            return out.toString(StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * A bounded replacement for BufferedReader.readLine(). Checking a String
+     * returned by readLine would be too late: the enormous allocation would
+     * already have happened. CRLF and bare CR are both accepted.
+     */
+    private static String readLineBounded(BufferedReader reader, int maxChars)
+            throws IOException {
+        StringBuilder line = new StringBuilder(Math.min(maxChars, 1024));
+        while (true) {
+            int ch = reader.read();
+            if (ch < 0) return line.isEmpty() ? null : line.toString();
+            if (ch == '\n') return line.toString();
+            if (ch == '\r') {
+                reader.mark(1);
+                int next = reader.read();
+                if (next != '\n' && next >= 0) reader.reset();
+                return line.toString();
+            }
+            if (line.length() >= maxChars) {
+                throw new ResponseTooLarge(
+                        "a provider stream event exceeded " + maxChars + " characters");
+            }
+            line.append((char) ch);
+        }
+    }
 
     private static void fail(Req req, String msg) {
         synchronized (LOCK) {
