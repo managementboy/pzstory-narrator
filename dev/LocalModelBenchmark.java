@@ -12,14 +12,17 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Reproducible local-model grounding benchmark.
+ * Reproducible narrator-model grounding benchmark.
  *
  * Uses PZStory's production prompt builder and terminal reply validator. All
  * scenes are synthetic and every result is appended before the next request,
@@ -27,7 +30,7 @@ import java.util.regex.Pattern;
  */
 public final class LocalModelBenchmark {
 
-    private static final URI OLLAMA = URI.create(
+    private static final URI DEFAULT_ENDPOINT = URI.create(
             "http://127.0.0.1:11434/v1/chat/completions");
 
     private static final String COMPACT_CHARTER = """
@@ -70,7 +73,8 @@ public final class LocalModelBenchmark {
         }
     }
 
-    private record Answer(String text, double seconds) {}
+    private record Answer(String text, double seconds, int inputTokens,
+                          int outputTokens, int thoughtTokens, int totalTokens) {}
 
     private static final List<Variant> ALL_VARIANTS = List.of(
             new Variant("baseline", false, false, false, 0.20, 0.90),
@@ -82,17 +86,63 @@ public final class LocalModelBenchmark {
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
+    private final String provider;
+    private final URI endpoint;
+    private final String apiKey;
+    private final String credentialLabel;
+    private final int maxTokens;
+    private final int thinkingTokens;
+    private final long minRequestIntervalMillis;
+    private long lastRequestStartedNanos;
     private List<String> physicalVocabulary;
     private List<String> actionVocabulary;
     private List<String> historyVocabulary;
 
-    private LocalModelBenchmark() {}
+    private LocalModelBenchmark(String provider, URI endpoint, String apiKey,
+                                int maxTokens, int thinkingTokens,
+                                long minRequestIntervalMillis,
+                                String credentialLabel) {
+        this.provider = provider;
+        this.endpoint = endpoint;
+        this.apiKey = apiKey;
+        this.credentialLabel = credentialLabel;
+        this.maxTokens = maxTokens;
+        this.thinkingTokens = thinkingTokens;
+        this.minRequestIntervalMillis = minRequestIntervalMillis;
+    }
 
     public static void main(String[] args) throws Exception {
         Map<String, String> cli = arguments(args);
         Path scenesPath = Path.of(required(cli, "scenes"));
         Path output = Path.of(required(cli, "out"));
         String model = cli.getOrDefault("model", "pzstory-stheno:latest");
+        String provider = cli.getOrDefault("provider", "openai-compatible");
+        URI endpoint = URI.create(cli.getOrDefault(
+                "endpoint", DEFAULT_ENDPOINT.toString()));
+        String keyEnv = cli.getOrDefault("api-key-env", "");
+        String apiKey = keyEnv.isBlank() ? "" : System.getenv(keyEnv);
+        String credentialLabel = cli.getOrDefault("credential-label", "");
+        if (!keyEnv.isBlank() && (apiKey == null || apiKey.isBlank())) {
+            throw new IllegalArgumentException("environment variable " + keyEnv
+                    + " is missing or empty");
+        }
+        int maxTokens = Integer.parseInt(cli.getOrDefault("max-tokens", "900"));
+        int thinkingTokens = Integer.parseInt(
+                cli.getOrDefault("thinking-tokens", "0"));
+        long minRequestIntervalMillis = Long.parseLong(
+                cli.getOrDefault("min-request-interval-ms", "0"));
+        if (!List.of("openai-compatible", "gemini").contains(provider)) {
+            throw new IllegalArgumentException("unsupported provider " + provider);
+        }
+        if (maxTokens < 1 || maxTokens > 32000
+                || thinkingTokens < 0 || thinkingTokens > 24000
+                || minRequestIntervalMillis < 0
+                || minRequestIntervalMillis > 300000) {
+            throw new IllegalArgumentException("invalid token limit");
+        }
+        if ("gemini".equals(provider) && apiKey.isBlank()) {
+            throw new IllegalArgumentException("Gemini requires --api-key-env");
+        }
         String split = cli.getOrDefault("split", "all");
         List<String> sceneFilter = List.of(
                 cli.getOrDefault("scene", "all").split(","));
@@ -103,7 +153,10 @@ public final class LocalModelBenchmark {
         List<String> wantedVariants = List.of(
                 cli.getOrDefault("variants", "baseline").split(","));
 
-        LocalModelBenchmark benchmark = new LocalModelBenchmark();
+        LocalModelBenchmark benchmark = new LocalModelBenchmark(
+                provider, endpoint, apiKey == null ? "" : apiKey,
+                maxTokens, thinkingTokens, minRequestIntervalMillis,
+                credentialLabel);
         List<Scene> scenes = benchmark.loadScenes(scenesPath);
         List<Variant> variants = ALL_VARIANTS.stream()
                 .filter(v -> wantedVariants.contains(v.name())).toList();
@@ -117,7 +170,12 @@ public final class LocalModelBenchmark {
         benchmark.writeMetadata(output, model, scenesPath, variants,
                 repetitions, seedBase, deadline);
 
-        List<Map<String, Object>> rows = new ArrayList<>();
+        List<Map<String, Object>> rows = benchmark.loadExisting(results);
+        Set<String> completed = new HashSet<>();
+        for (Map<String, Object> row : rows) completed.add(caseKey(row));
+        if (!rows.isEmpty()) {
+            System.out.println("resuming after " + rows.size() + " completed case(s)");
+        }
         int requestNumber = 0;
         outer:
         for (Variant variant : variants) {
@@ -125,14 +183,17 @@ public final class LocalModelBenchmark {
                 if (!"all".equals(split) && !split.equals(scene.split())) continue;
                 if (!sceneFilter.contains("all") && !sceneFilter.contains(scene.id())) continue;
                 for (int repetition = 0; repetition < repetitions; repetition++) {
+                    long seed = seedBase + requestNumber++;
+                    String key = caseKey(variant.name(), scene.id(), repetition);
+                    if (completed.contains(key)) continue;
                     if (deadline != null && OffsetDateTime.now().isAfter(deadline)) {
                         System.out.println("deadline reached before next case");
                         break outer;
                     }
-                    long seed = seedBase + requestNumber++;
                     Map<String, Object> row = benchmark.run(
                             model, variant, scene, repetition, seed);
                     rows.add(row);
+                    completed.add(key);
                     Files.writeString(results, Json.of(row) + System.lineSeparator(),
                             StandardCharsets.UTF_8, StandardOpenOption.CREATE,
                             StandardOpenOption.APPEND);
@@ -168,6 +229,10 @@ public final class LocalModelBenchmark {
         Evaluation evaluation = evaluate(first.text(), scene);
         String finalText = first.text();
         double seconds = first.seconds();
+        int inputTokens = first.inputTokens();
+        int outputTokens = first.outputTokens();
+        int thoughtTokens = first.thoughtTokens();
+        int totalTokens = first.totalTokens();
         boolean repaired = false;
 
         if (variant.repair() && (!evaluation.structureValid()
@@ -177,6 +242,10 @@ public final class LocalModelBenchmark {
             Answer second = call(model, messages, variant, seed + 10_000_000L);
             finalText = second.text();
             seconds += second.seconds();
+            inputTokens += second.inputTokens();
+            outputTokens += second.outputTokens();
+            thoughtTokens += second.thoughtTokens();
+            totalTokens += second.totalTokens();
             evaluation = evaluate(finalText, scene);
             repaired = true;
         }
@@ -184,6 +253,9 @@ public final class LocalModelBenchmark {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("timestamp", OffsetDateTime.now().toString());
         row.put("model", model);
+        if (!credentialLabel.isBlank()) {
+            row.put("credentialLabel", credentialLabel);
+        }
         row.put("variant", variant.name());
         row.put("scene", scene.id());
         row.put("split", scene.split());
@@ -194,6 +266,10 @@ public final class LocalModelBenchmark {
         row.put("firstPage", scene.first());
         row.put("promptChars", system.length() + user.length());
         row.put("seconds", seconds);
+        row.put("inputTokens", inputTokens);
+        row.put("outputTokens", outputTokens);
+        row.put("thoughtTokens", thoughtTokens);
+        row.put("totalTokens", totalTokens);
         row.put("repaired", repaired);
         row.put("structureValid", evaluation.structureValid());
         row.put("structureError", evaluation.structureError());
@@ -206,23 +282,34 @@ public final class LocalModelBenchmark {
 
     private Answer call(String model, List<Map<String, String>> messages,
                         Variant variant, long seed) throws Exception {
+        return "gemini".equals(provider)
+                ? callGemini(model, messages, variant, seed)
+                : callOpenAi(model, messages, variant, seed);
+    }
+
+    private Answer callOpenAi(String model, List<Map<String, String>> messages,
+                              Variant variant, long seed) throws Exception {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("model", model);
         request.put("stream", false);
-        request.put("max_tokens", 900);
+        request.put("max_tokens", maxTokens);
         request.put("temperature", variant.temperature());
         request.put("top_p", variant.topP());
         request.put("seed", seed);
         request.put("messages", messages);
         long began = System.nanoTime();
-        HttpResponse<String> response = http.send(HttpRequest.newBuilder()
-                .uri(OLLAMA).timeout(Duration.ofMinutes(4))
-                .header("Content-Type", "application/json")
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(endpoint).timeout(Duration.ofMinutes(4))
+                .header("Content-Type", "application/json");
+        if (!apiKey.isBlank()) {
+            builder.header("Authorization", "Bearer " + apiKey);
+        }
+        HttpResponse<String> response = http.send(builder
                 .POST(HttpRequest.BodyPublishers.ofString(Json.of(request)))
                 .build(), HttpResponse.BodyHandlers.ofString());
         double seconds = (System.nanoTime() - began) / 1_000_000_000.0;
         if (response.statusCode() != 200) {
-            throw new IllegalStateException("Ollama HTTP " + response.statusCode()
+            throw new IllegalStateException("provider HTTP " + response.statusCode()
                     + ": " + response.body());
         }
         Map<String, Object> root = JsonParse.parseObject(response.body());
@@ -237,7 +324,96 @@ public final class LocalModelBenchmark {
         String content = message == null ? null
                 : JsonParse.str(message, "content", null);
         if (content == null) throw new IllegalStateException("no assistant content");
-        return new Answer(content, seconds);
+        Map<String, Object> usage = JsonParse.map(root, "usage");
+        int input = number(usage, "prompt_tokens");
+        int output = number(usage, "completion_tokens");
+        int total = number(usage, "total_tokens");
+        return new Answer(content, seconds, input, output, 0, total);
+    }
+
+    private Answer callGemini(String model, List<Map<String, String>> messages,
+                              Variant variant, long seed) throws Exception {
+        Map<String, Object> request = new LinkedHashMap<>();
+        List<Map<String, Object>> contents = new ArrayList<>();
+        for (Map<String, String> message : messages) {
+            String role = message.get("role");
+            String content = message.get("content");
+            if ("system".equals(role)) {
+                request.put("systemInstruction", Map.of(
+                        "parts", List.of(Map.of("text", content))));
+            } else {
+                contents.add(Map.of(
+                        "role", "assistant".equals(role) ? "model" : "user",
+                        "parts", List.of(Map.of("text", content))));
+            }
+        }
+        request.put("contents", contents);
+        Map<String, Object> generation = new LinkedHashMap<>();
+        generation.put("maxOutputTokens", Math.min(32000,
+                maxTokens + thinkingTokens));
+        generation.put("temperature", variant.temperature());
+        generation.put("topP", variant.topP());
+        generation.put("seed", seed);
+        generation.put("thinkingConfig", Map.of(
+                "thinkingBudget", thinkingTokens,
+                "includeThoughts", false));
+        request.put("generationConfig", generation);
+
+        String base = endpoint.toString().replaceFirst("/+$", "");
+        URI requestUri = URI.create(base + "/models/"
+                + Endpoint.encodeSegment(model) + ":generateContent");
+        HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(requestUri).timeout(Duration.ofMinutes(4))
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(Json.of(request)))
+                .build();
+        long began = System.nanoTime();
+        HttpResponse<String> response = null;
+        for (int attempt = 0; attempt < 6; attempt++) {
+            paceRequests();
+            response = http.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 429
+                    || response.body().contains("GenerateRequestsPerDay")
+                    || attempt == 5) break;
+            int waitSeconds = retrySeconds(response);
+            System.out.println("Gemini quota pause: " + waitSeconds + "s");
+            Thread.sleep(waitSeconds * 1000L);
+        }
+        double seconds = (System.nanoTime() - began) / 1_000_000_000.0;
+        if (response == null) throw new IllegalStateException("no Gemini response");
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("Gemini HTTP " + response.statusCode()
+                    + ": " + response.body());
+        }
+        Map<String, Object> root = JsonParse.parseObject(response.body());
+        List<Object> candidates = objects(root.get("candidates"));
+        if (candidates.isEmpty() || !(candidates.get(0) instanceof Map<?, ?> raw)) {
+            throw new IllegalStateException("Gemini response had no candidates");
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> candidate = (Map<String, Object>) raw;
+        Map<String, Object> candidateContent = JsonParse.map(candidate, "content");
+        StringBuilder text = new StringBuilder();
+        if (candidateContent != null) {
+            for (Object item : objects(candidateContent.get("parts"))) {
+                if (item instanceof Map<?, ?> rawPart) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> part = (Map<String, Object>) rawPart;
+                    if (!Boolean.TRUE.equals(part.get("thought"))) {
+                        String value = JsonParse.str(part, "text", "");
+                        text.append(value);
+                    }
+                }
+            }
+        }
+        if (text.isEmpty()) throw new IllegalStateException("no Gemini text content");
+        Map<String, Object> usage = JsonParse.map(root, "usageMetadata");
+        int input = number(usage, "promptTokenCount");
+        int output = number(usage, "candidatesTokenCount");
+        int thoughts = number(usage, "thoughtsTokenCount");
+        int total = number(usage, "totalTokenCount");
+        return new Answer(text.toString(), seconds, input, output, thoughts, total);
     }
 
     private Evaluation evaluate(String answer, Scene scene) {
@@ -367,8 +543,17 @@ public final class LocalModelBenchmark {
                                long seed, OffsetDateTime deadline) throws Exception {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("started", OffsetDateTime.now().toString());
+        meta.put("provider", provider);
+        meta.put("endpoint", endpoint.toString());
+        if (!credentialLabel.isBlank()) {
+            meta.put("credentialLabel", credentialLabel);
+        }
         meta.put("model", model);
-        meta.put("modelDigest", modelDigest(model));
+        meta.put("modelDigest", "openai-compatible".equals(provider)
+                ? modelDigest(model) : "managed-online-model");
+        meta.put("maxTokens", maxTokens);
+        meta.put("thinkingTokens", thinkingTokens);
+        meta.put("minRequestIntervalMillis", minRequestIntervalMillis);
         meta.put("scenes", scenes.toAbsolutePath().toString());
         meta.put("scenesSha256", sha256(Files.readAllBytes(scenes)));
         meta.put("variants", variants.stream().map(Variant::name).toList());
@@ -378,6 +563,15 @@ public final class LocalModelBenchmark {
         meta.put("pZStoryRelease", Version.RELEASE);
         meta.put("bridgeApi", Version.API);
         Files.writeString(output.resolve("metadata.json"), Json.of(meta) + "\n");
+    }
+
+    private List<Map<String, Object>> loadExisting(Path results) throws Exception {
+        if (!Files.isRegularFile(results)) return new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (String line : Files.readAllLines(results, StandardCharsets.UTF_8)) {
+            if (!line.isBlank()) rows.add(JsonParse.parseObject(line));
+        }
+        return rows;
     }
 
     @SuppressWarnings("unchecked")
@@ -401,7 +595,8 @@ public final class LocalModelBenchmark {
     private void writeSummary(Path path, List<Map<String, Object>> rows,
                               String model, String split) throws Exception {
         StringBuilder out = new StringBuilder();
-        out.append("# Local-model benchmark summary\n\n")
+        out.append("# Narrator-model benchmark summary\n\n")
+                .append("Provider: `").append(provider).append("`  \n")
                 .append("Model: `").append(model).append("`  \n")
                 .append("Split: `").append(split).append("`  \n")
                 .append("Completed: ").append(rows.size()).append(" cases\n\n")
@@ -425,6 +620,50 @@ public final class LocalModelBenchmark {
                     100.0 * grounded / group.size(), score, seconds));
         }
         Files.writeString(path, out.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static int number(Map<String, Object> values, String key) {
+        if (values == null) return 0;
+        Object value = values.get(key);
+        return value instanceof Number n ? n.intValue() : 0;
+    }
+
+    private static String caseKey(Map<String, Object> row) {
+        return caseKey(String.valueOf(row.get("variant")),
+                String.valueOf(row.get("scene")),
+                ((Number) row.get("repetition")).intValue());
+    }
+
+    private static String caseKey(String variant, String scene, int repetition) {
+        return variant + "\n" + scene + "\n" + repetition;
+    }
+
+    private static int retrySeconds(HttpResponse<String> response) {
+        String header = response.headers().firstValue("Retry-After").orElse("");
+        try {
+            return Math.max(15, Math.min(90, Integer.parseInt(header) + 15));
+        } catch (NumberFormatException ignored) {}
+        Matcher match = Pattern.compile("\\\"retryDelay\\\"\\s*:\\s*\\\"(\\d+)s\\\"")
+                .matcher(response.body());
+        if (match.find()) {
+            return Math.max(15, Math.min(90,
+                    Integer.parseInt(match.group(1)) + 15));
+        }
+        return 75;
+    }
+
+    private synchronized void paceRequests() throws InterruptedException {
+        if (minRequestIntervalMillis == 0 || lastRequestStartedNanos == 0) {
+            lastRequestStartedNanos = System.nanoTime();
+            return;
+        }
+        long intervalNanos = minRequestIntervalMillis * 1_000_000L;
+        long remaining = lastRequestStartedNanos + intervalNanos - System.nanoTime();
+        if (remaining > 0) {
+            long millis = (remaining + 999_999L) / 1_000_000L;
+            Thread.sleep(millis);
+        }
+        lastRequestStartedNanos = System.nanoTime();
     }
 
     private static boolean contains(String text, String phrase) {
