@@ -395,6 +395,13 @@ public final class Prompt {
             sb.append("The survivor's pronouns are ").append(pro)
               .append(". Use them throughout.\n");
         }
+        if (stateJson != null
+                && stateJson.contains("\"timeSurvived\":\"less than a day\"")) {
+            sb.append("THE SURVIVOR HAS NOT LIVED THROUGH A NIGHT YET. The "
+                    + "save began only hours ago. Do not say they survived one "
+                    + "night, even if an earlier page mistakenly said so; do "
+                    + "not mention or explain the correction.\n");
+        }
         if (first) {
             sb.append("This is the FIRST page of the story, and it does two "
                     + "things.\n\n"

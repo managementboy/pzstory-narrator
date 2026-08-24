@@ -13,7 +13,8 @@ public final class NarrativeStateTest {
                   "schema":1,
                   "modVersion":"1.0",
                   "wallClock":123,
-                  "time":{"year":1993,"worldAgeHours":87,"daysSinceItBegan":3},
+                  "time":{"year":1993,"worldAgeHours":87,"nightsSurvived":4,
+                          "daysSinceItBegan":3},
                   "readErrors":["private path"],
                   "character":{"username":"account","forename":"Sam",
                                "female":false,"pronouns":"they/them",
@@ -43,6 +44,7 @@ public final class NarrativeStateTest {
 
         Map<String, Object> time = JsonParse.map(sent, "time");
         T.ok("exact world age removed", !time.containsKey("worldAgeHours"));
+        T.ok("unreliable night counter removed", !time.containsKey("nightsSurvived"));
         T.eq("calendar retained", 1993.0, time.get("year"));
 
         Map<String, Object> character = JsonParse.map(sent, "character");

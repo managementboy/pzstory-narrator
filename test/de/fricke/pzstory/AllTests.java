@@ -7,6 +7,7 @@ public final class AllTests {
         JsonParseTest.run();
         PageResultTest.run();
         NarrativeStateTest.run();
+        PromptFreshStartTest.run();
         DeltaTest.run();
         EventJournalTest.run();
         WorldMemoryTest.run();

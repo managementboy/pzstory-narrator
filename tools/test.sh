@@ -45,6 +45,7 @@ src/de/fricke/pzstory/Llm.java \
 src/de/fricke/pzstory/NarrativeState.java \
 src/de/fricke/pzstory/PageResult.java \
 src/de/fricke/pzstory/PlaceRef.java \
+src/de/fricke/pzstory/Prompt.java \
 src/de/fricke/pzstory/Scenario.java \
 src/de/fricke/pzstory/StoryEvent.java \
 src/de/fricke/pzstory/Settings.java \

@@ -33,7 +33,13 @@ public final class NarrativeState {
         root.remove("nutrition");
 
         Map<String, Object> time = map(root, "time");
-        if (time != null) time.remove("worldAgeHours");
+        if (time != null) {
+            time.remove("worldAgeHours");
+            // Build 42 reports 1 here on the opening morning before the
+            // survivor has lived through any night. Actual hours survived are
+            // projected below and are the authoritative story fact.
+            time.remove("nightsSurvived");
+        }
 
         Map<String, Object> character = map(root, "character");
         if (character != null) {
