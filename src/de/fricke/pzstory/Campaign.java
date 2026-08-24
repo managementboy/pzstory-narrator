@@ -25,7 +25,7 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
-    private static final int CURRENT_SCHEMA = 6;
+    private static final int CURRENT_SCHEMA = 7;
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
@@ -222,7 +222,8 @@ public final class Campaign {
             if (!nextMode.equals("chronicler") && !nextMode.equals("director"))
                 throw new IllegalStateException("unknown campaign mode " + nextMode);
             DirectorBible nextDirector = new DirectorBible();
-            if (schema >= 6) nextDirector.load(m.get("directorBible"));
+            if (schema >= 6) nextDirector.load(
+                    m.get("directorBible"), Scenario.byId(nextScenario));
             if (nextMode.equals("chronicler") && nextDirector.frozen())
                 throw new IllegalStateException("chronicler campaign has a director bible");
             String nextPremise = field(m, "premise", 32000);
@@ -830,6 +831,7 @@ public final class Campaign {
         WorldMemory.Snapshot oldMemory = MEMORY.snapshot();
         FactMemory.Snapshot oldFacts = FACTS.snapshot();
         ContinuityMemory.Snapshot oldContinuity = CONTINUITY.snapshot();
+        DirectorBible.Snapshot oldDirector = DIRECTOR.snapshot();
         boolean oldDirty = eventDirty;
         long oldNextCheckpoint = nextEventCheckpointNanos;
         try {
@@ -837,7 +839,10 @@ public final class Campaign {
                     ? List.of()
                     : EventDetector.between(OBSERVED_STATE, kept, stamp);
             boolean memoryChanged = MEMORY.observe(kept, stamp);
-            for (StoryEvent.Draft event : detected) EVENTS.record(event);
+            for (StoryEvent.Draft event : detected) {
+                long id = EVENTS.record(event);
+                if ("director".equals(MODE)) DIRECTOR.observe(id, event.type, event.summary);
+            }
             boolean factsChanged = updateGameFacts(OBSERVED_STATE, kept,
                     detected, stamp);
             boolean firstObservation = OBSERVED_STATE.isEmpty();
@@ -872,6 +877,7 @@ public final class Campaign {
         MEMORY.restore(oldMemory);
         FACTS.restore(oldFacts);
         CONTINUITY.restore(oldContinuity);
+        DIRECTOR.restore(oldDirector);
         eventDirty = oldDirty;
         nextEventCheckpointNanos = oldNextCheckpoint;
         return false;
@@ -893,8 +899,7 @@ public final class Campaign {
 
     public static synchronized String directorStatusJson() {
         load();
-        return new Json().obj().put("mode", MODE)
-                .put("frozen", DIRECTOR.frozen()).endObj().toString();
+        return DIRECTOR.statusJson(MODE);
     }
 
     /** Maintains a few current-state slots without inferring ownership or safety. */
@@ -983,9 +988,11 @@ public final class Campaign {
         load();
         EventJournal.Snapshot old = EVENTS.snapshot();
         ContinuityMemory.Snapshot oldContinuity = CONTINUITY.snapshot();
+        DirectorBible.Snapshot oldDirector = DIRECTOR.snapshot();
         try {
-            EVENTS.record(StoryEvent.draft(type, stamp, placeId, place,
+            long eventId = EVENTS.record(StoryEvent.draft(type, stamp, placeId, place,
                     summary, source, importance));
+            if ("director".equals(MODE)) DIRECTOR.observe(eventId, type, summary);
             if (isRoutineAction(type) && placeId != null && !placeId.isEmpty()) {
                 CONTINUITY.record("routine", type + "@" + placeId,
                         routineLabel(type, place), stamp);
@@ -996,6 +1003,7 @@ public final class Campaign {
         }
         EVENTS.restore(old);
         CONTINUITY.restore(oldContinuity);
+        DIRECTOR.restore(oldDirector);
         return false;
     }
 

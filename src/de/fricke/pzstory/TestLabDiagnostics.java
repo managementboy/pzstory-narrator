@@ -18,6 +18,7 @@ final class TestLabDiagnostics {
         if (scenario.equals("all") || scenario.equals("kill")) kill(checks);
         if (scenario.equals("all") || scenario.equals("time")) time(checks);
         if (scenario.equals("all") || scenario.equals("continuity")) continuity(checks);
+        if (scenario.equals("all") || scenario.equals("director")) director(checks);
         if (checks.isEmpty()) checks.add(new Check("known scenario", false, scenario));
         Json out = new Json().obj().put("scenario", scenario).arrKey("checks");
         int passed = 0;
@@ -85,6 +86,60 @@ final class TestLabDiagnostics {
         String prompt = memory.prompt();
         out.add(new Check("weapon familiarity", prompt.contains("becoming familiar"), "two observations"));
         out.add(new Check("repeated routine", prompt.contains("repeatedly"), "three observations"));
+    }
+
+    private static void director(List<Check> out) {
+        DirectorBible success = new DirectorBible();
+        success.freeze(Scenario.byId("conspiracy"), "Find the truth.");
+        out.add(new Check("director objective active",
+                success.statusJson().contains("\"objectiveState\":\"active\""),
+                "one active objective"));
+        out.add(new Check("director ignores unrelated evidence",
+                !success.observe(1, StoryEvent.KILL, "They killed one zombie."),
+                "kill cannot satisfy clue objective"));
+        out.add(new Check("director objective succeeds",
+                success.observe(2, StoryEvent.ITEM_ACQUIRED, "They acquired a newspaper.")
+                        && success.statusJson().contains("\"objectiveState\":\"succeeded\""),
+                "matching journal evidence"));
+        out.add(new Check("director staged reveal",
+                success.statusJson().contains("\"revealed\":1"),
+                "one clue promoted"));
+        out.add(new Check("director hidden-plan privacy",
+                !success.publicPrompt().contains("later discovery must connect"),
+                "later clue remains private"));
+
+        DirectorBible failed = new DirectorBible();
+        failed.freeze(Scenario.byId("survival"), "Hold out.");
+        out.add(new Check("director objective failure",
+                failed.transition("failed", "The refuge was overrun."),
+                "terminal failure recorded"));
+
+        DirectorBible impossible = new DirectorBible();
+        impossible.freeze(Scenario.byId("road"), "Keep moving.");
+        out.add(new Check("director impossible transition",
+                impossible.transition("impossible", "Every vehicle was destroyed."),
+                "terminal impossibility recorded"));
+
+        DirectorBible rerouted = new DirectorBible();
+        rerouted.freeze(Scenario.byId("road"), "Keep moving.");
+        out.add(new Check("director fail-forward replacement",
+                rerouted.failForward("The vehicle route is blocked.")
+                        && rerouted.statusJson().contains("\"objectiveState\":\"active\""),
+                "one replacement objective"));
+        out.add(new Check("director rejects abandoned-route evidence",
+                !rerouted.observe(10, StoryEvent.VEHICLE_ENTERED, "They entered a wreck."),
+                "old evidence rule retired"));
+        out.add(new Check("director replacement succeeds",
+                rerouted.observe(11, StoryEvent.PLACE_CHANGED, "They reached another place."),
+                "fallback evidence accepted"));
+
+        Json json = new Json().obj();
+        rerouted.write(json); json.endObj();
+        DirectorBible loaded = new DirectorBible();
+        loaded.load(JsonParse.parseObject(json.toString()).get("directorBible"));
+        out.add(new Check("director save reload",
+                loaded.snapshot().equals(rerouted.snapshot()),
+                "private plan round trip"));
     }
 
     private static String state(String room, String roomId, double hour, int kills,

@@ -148,6 +148,14 @@ public final class BridgeContractTest {
         T.ok("place visit count and pending events are visible",
                 probe.contains("VISIT \" .. visits")
                         && probe.contains("PENDING INBOX"));
+        T.ok("Director objective operations are visible without hidden plans",
+                api.contains("String directorStatus()")
+                        && probe.contains("decodeDiagnostic(\"directorStatus\")")
+                        && probe.contains("DIRECTOR \" .. d.state:upper()")
+                        && probe.contains("EVIDENCE \"")
+                        && probe.contains("REVEALED \"")
+                        && !method(api, "public static String directorStatus()")
+                                .contains("fixedSpine"));
         T.ok("F5 cycles inbox, narrated history and story facts",
                 probe.contains("Keyboard.KEY_F5")
                         && probe.contains("switchInbox()")

@@ -57,9 +57,13 @@ Remaining:
 
 Foundation shipped in `2.0.0-alpha.7`: explicit Chronicler/Director mode,
 schema-6 private campaign bible frozen in the first-page transaction, one
-provider-visible major objective, and hidden-plan separation. Destination
-validation, objective evidence, fail-forward transitions, and staged reveals
-remain in this milestone.
+provider-visible major objective, and hidden-plan separation.
+
+`2.0.0-alpha.8` adds the schema-7 deterministic objective state machine, journal-based
+evidence rules, impossible-objective fail-forward replacement, evidence-gated
+reveals, a privacy-safe Testing Mode panel, and non-destructive Director Test
+Lab scenarios. Real destination-registry validation and campaign balancing
+remain.
 
 - Add an opt-in Director mode beside the current Chronicler mode.
 - Generate and freeze a private campaign bible at the first-page transaction.

@@ -194,6 +194,7 @@ local overlay = {
     facts = {},
     threads = {},
     continuity = {},
+    director = nil,
     pending = 0,
     error = nil,
     mode = "pending",
@@ -221,8 +222,9 @@ local function refreshOverlay()
     local factRoot = decodeDiagnostic("factMemory")
     local threadRoot = decodeDiagnostic("threadMemory")
     local continuityRoot = decodeDiagnostic("continuityMemory")
+    local director = decodeDiagnostic("directorStatus")
     if memory == nil or journal == nil or factRoot == nil or threadRoot == nil
-            or continuityRoot == nil then
+            or continuityRoot == nil or director == nil then
         overlay.error = "diagnostics unavailable"
         return
     end
@@ -246,6 +248,15 @@ local function refreshOverlay()
     overlay.facts = {}
     overlay.threads = {}
     overlay.continuity = {}
+    overlay.director = {
+        mode = tostring(director.mode or "chronicler"),
+        objective = tostring(director.objective or ""),
+        state = tostring(director.objectiveState or ""),
+        evidence = tonumber(director.evidenceCount) or 0,
+        required = tonumber(director.evidenceRequired) or 0,
+        revealed = tonumber(director.revealed) or 0,
+        reason = tostring(director.transitionReason or ""),
+    }
     if type(journal.events) == "table" then
         for i = #journal.events, 1, -1 do
             local event = journal.events[i]
@@ -360,6 +371,22 @@ local function drawOverlay()
     shadowText(UIFont.Small, x, y, view .. "  |  PENDING: " .. overlay.pending,
         overlay.pending > 0 and 1 or 0.6, overlay.pending > 0 and 0.8 or 0.9, 0.35, false)
     y = y + 18
+    if overlay.director ~= nil and overlay.director.mode == "director" then
+        local d = overlay.director
+        shadowText(UIFont.Small, x, y,
+            "DIRECTOR " .. d.state:upper() .. "  |  EVIDENCE "
+                .. d.evidence .. "/" .. d.required .. "  |  REVEALED " .. d.revealed,
+            0.85, 0.65, 1, false)
+        y = y + 16
+        local objective = d.objective
+        if #objective > 80 then objective = objective:sub(1, 77) .. "..." end
+        shadowText(UIFont.Small, x, y, objective, 0.85, 0.75, 1, false)
+        y = y + 16
+        local reason = d.reason
+        if #reason > 80 then reason = reason:sub(1, 77) .. "..." end
+        shadowText(UIFont.Small, x, y, "NEXT/WHY: " .. reason, 0.7, 0.65, 0.85, false)
+        y = y + 18
+    end
     if overlay.mode == "continuity" then
         if #overlay.continuity == 0 then
             shadowText(UIFont.Small, x, y, "(no repeated evidence)", 0.7, 0.7, 0.7, false)
@@ -541,7 +568,7 @@ end
 local function runQuickChecks()
     lab.results = {}
     local methods = { "version", "apiVersion", "eventJournal", "worldMemory",
-        "factMemory", "threadMemory", "continuityMemory", "providerPreview",
+        "factMemory", "threadMemory", "continuityMemory", "directorStatus", "providerPreview",
         "testLabScenario" }
     labResult("game debug mode", debugEnabled(), debugEnabled() and "enabled" or "launch with -debug")
     labResult("Java bridge", type(PZStory) == "table", type(PZStory))
@@ -550,7 +577,7 @@ local function runQuickChecks()
         labResult("bridge: " .. method, type(PZStory[method]) == "function")
     end
     for _, method in ipairs({ "eventJournal", "worldMemory", "factMemory",
-            "threadMemory", "continuityMemory" }) do
+            "threadMemory", "continuityMemory", "directorStatus" }) do
         labResult(method .. " JSON", decodeDiagnostic(method) ~= nil)
     end
     local preview = ""

@@ -90,6 +90,25 @@ public final class CampaignTest {
             T.ok("campaign exists", Files.isRegularFile(store));
             T.ok("last-known-good backup exists", Files.isRegularFile(backup));
 
+            Path directorBlockedTmp = store.resolveSibling("campaign.json.tmp");
+            Files.createDirectories(directorBlockedTmp);
+            Files.writeString(directorBlockedTmp.resolve("guard"), "x", StandardCharsets.UTF_8);
+            T.ok("failed matching event reports persistence failure",
+                    !Campaign.recordEvent(StoryEvent.VEHICLE_ENTERED,
+                            "They entered a working vehicle.", 70,
+                            "1993-07-10 09:55", "vehicle-7", "the road", "game"));
+            T.ok("failed matching event rolls Director evidence back",
+                    Campaign.directorStatusJson().contains("\"objectiveState\":\"active\"")
+                            && Campaign.directorStatusJson().contains("\"evidenceCount\":0"));
+            deleteTree(directorBlockedTmp);
+            T.ok("durable matching event completes Director objective",
+                    Campaign.recordEvent(StoryEvent.VEHICLE_ENTERED,
+                            "They entered a working vehicle.", 70,
+                            "1993-07-10 09:55", "vehicle-7", "the road", "game"));
+            T.ok("Director success and reveal are durable together",
+                    Campaign.directorStatusJson().contains("\"objectiveState\":\"succeeded\"")
+                            && Campaign.directorStatusJson().contains("\"revealed\":1"));
+
             Path blockedTmp = store.resolveSibling("campaign.json.tmp");
             Files.createDirectories(blockedTmp);
             Files.writeString(blockedTmp.resolve("guard"), "x", StandardCharsets.UTF_8);
