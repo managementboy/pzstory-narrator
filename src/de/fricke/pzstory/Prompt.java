@@ -274,7 +274,10 @@ public final class Prompt {
             not given. Prefix every entry with exactly one memory kind: \
             [world], [biography], [person], [possession], [injury], [knowledge], \
             [belief], [promise], or [thread]. Example: "- [belief] she no longer \
-            trusts an unlocked door". Leave the block empty rather than padding it.
+            trusts an unlocked door". A deliberate setup must instead use \
+            "- [thread] setup short-key: what was established". Only create one \
+            when you intend to develop or pay it off; never label atmosphere or \
+            ordinary uncertainty as a setup. Leave the block empty rather than padding it.
             """;
 
     /**
@@ -505,7 +508,9 @@ public final class Prompt {
                 + "already says; that is re-read every time. Prefix each line "
                 + "with one exact kind: [world], [biography], [person], "
                 + "[possession], [injury], [knowledge], [belief], [promise], "
-                + "or [thread].\n");
+                + "or [thread]. A deliberate setup uses exactly: [thread] "
+                + "setup short-key: description. Do not create one merely to "
+                + "make the page sound mysterious.\n");
         sb.append("WRITE IT IN THE PRESENT TENSE. He is standing there right "
                 + "now, this second, with the game paused around him. \"He "
                 + "stands\", \"the room is\", \"the light comes through\" - not "

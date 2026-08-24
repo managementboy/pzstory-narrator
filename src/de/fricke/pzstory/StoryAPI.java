@@ -134,6 +134,16 @@ public class StoryAPI {
         return Campaign.factMemoryJson();
     }
 
+    /** Local-only deliberate setup/payoff records. */
+    public static String threadMemory() {
+        return Campaign.threadMemoryJson();
+    }
+
+    /** Local ids and counts behind qualitative familiarity projections. */
+    public static String continuityMemory() {
+        return Campaign.continuityMemoryJson();
+    }
+
     public static int pendingEvents() {
         return Campaign.pendingEventCount();
     }

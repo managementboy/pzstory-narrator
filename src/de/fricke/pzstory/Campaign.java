@@ -25,7 +25,7 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
-    private static final int CURRENT_SCHEMA = 3;
+    private static final int CURRENT_SCHEMA = 5;
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
@@ -70,6 +70,8 @@ public final class Campaign {
     private static final LinkedHashSet<String> CANON = new LinkedHashSet<>();
     /** Schema-3 authority; CANON remains a compatibility projection. */
     private static final FactMemory FACTS = new FactMemory();
+    private static final ThreadMemory THREADS = new ThreadMemory();
+    private static final ContinuityMemory CONTINUITY = new ContinuityMemory();
     private static final EventJournal EVENTS = new EventJournal();
     private static final WorldMemory MEMORY = new WorldMemory();
 
@@ -139,6 +141,8 @@ public final class Campaign {
         PAGES.clear();
         CANON.clear();
         FACTS.clear();
+        THREADS.clear();
+        CONTINUITY.clear();
         DIRECTIONS.clear();
         STANDING.clear();
         SEEN.clear();
@@ -193,6 +197,10 @@ public final class Campaign {
                             player ? 95 : 40, 0);
                 }
             }
+            ThreadMemory nextThreads = new ThreadMemory();
+            if (schema >= 4) nextThreads.load(m.get("threadMemory"));
+            ContinuityMemory nextContinuity = new ContinuityMemory();
+            if (schema >= 5) nextContinuity.load(m.get("continuityMemory"));
             String nextOpening = field(m, "opening", 32000);
             // Self-heal a campaign opened by 1.15.0/1.15.1, where the trait
             // list had become objects but the opening builder still called
@@ -261,6 +269,8 @@ public final class Campaign {
             PAGES.clear(); PAGES.addAll(nextPages);
             CANON.clear(); CANON.addAll(nextCanon);
             FACTS.restore(nextFacts.snapshot());
+            THREADS.restore(nextThreads.snapshot());
+            CONTINUITY.restore(nextContinuity.snapshot());
             DIRECTIONS.clear(); DIRECTIONS.addAll(nextDirections);
             STANDING.clear(); STANDING.addAll(nextStanding);
             SEEN.clear(); SEEN.addAll(nextSeen);
@@ -327,6 +337,8 @@ public final class Campaign {
         PAGES.clear();
         CANON.clear();
         FACTS.clear();
+        THREADS.clear();
+        CONTINUITY.clear();
         DIRECTIONS.clear();
         STANDING.clear();
         SEEN.clear();
@@ -409,6 +421,8 @@ public final class Campaign {
             for (String c : FACTS.activeText()) j.val(c);
             j.endArr();
             FACTS.write(j);
+            THREADS.write(j);
+            CONTINUITY.write(j);
             j.put("opening", OPENING);
             j.put("scenario", SCENARIO);
             j.put("premise", PREMISE);
@@ -506,9 +520,11 @@ public final class Campaign {
         load();
         LinkedHashSet<String> old = new LinkedHashSet<>(CANON);
         FactMemory.Snapshot oldFacts = FACTS.snapshot();
+        ThreadMemory.Snapshot oldThreads = THREADS.snapshot();
         if (addCanonInMemory(entries) && !save()) {
             CANON.clear(); CANON.addAll(old);
             FACTS.restore(oldFacts);
+            THREADS.restore(oldThreads);
         }
     }
 
@@ -521,15 +537,21 @@ public final class Campaign {
             // A canon file is where an invented door would quietly become
             // permanent, so keep entries short and drop anything empty.
             if (s.length() > 2 && s.length() <= 300 && !CANON.contains(s)) {
+                String prefix = "(the player observes) ";
+                boolean player = s.startsWith(prefix);
+                String factText = player ? s.substring(prefix.length()) : s;
+                String source = player ? "player" : "narrator";
+                if (ThreadMemory.looksLikeCommand(factText)
+                        && !THREADS.apply(factText, source, PAGES.size())) {
+                    Config.log("campaign: malformed or stale thread command refused");
+                    continue;
+                }
                 if (CANON.size() >= MAX_CANON) {
                     java.util.Iterator<String> oldest = CANON.iterator();
                     if (oldest.hasNext()) { oldest.next(); oldest.remove(); changed = true; }
                 }
                 changed |= CANON.add(s);
-                String prefix = "(the player observes) ";
-                boolean player = s.startsWith(prefix);
-                FACTS.add(player ? s.substring(prefix.length()) : s,
-                        "knowledge", player ? "player" : "narrator",
+                FACTS.add(factText, "knowledge", source,
                         player ? 95 : 55, PAGES.size());
             }
         }
@@ -545,6 +567,16 @@ public final class Campaign {
     public static synchronized String factMemoryJson() {
         load();
         return FACTS.json();
+    }
+
+    public static synchronized String threadMemoryJson() {
+        load();
+        return THREADS.json();
+    }
+
+    public static synchronized String continuityMemoryJson() {
+        load();
+        return CONTINUITY.json();
     }
 
     // ----------------------------------------------------------- opening
@@ -780,6 +812,7 @@ public final class Campaign {
         EventJournal.Snapshot oldEvents = EVENTS.snapshot();
         WorldMemory.Snapshot oldMemory = MEMORY.snapshot();
         FactMemory.Snapshot oldFacts = FACTS.snapshot();
+        ContinuityMemory.Snapshot oldContinuity = CONTINUITY.snapshot();
         boolean oldDirty = eventDirty;
         long oldNextCheckpoint = nextEventCheckpointNanos;
         try {
@@ -788,7 +821,8 @@ public final class Campaign {
                     : EventDetector.between(OBSERVED_STATE, kept, stamp);
             boolean memoryChanged = MEMORY.observe(kept, stamp);
             for (StoryEvent.Draft event : detected) EVENTS.record(event);
-            boolean factsChanged = updateGameFacts(OBSERVED_STATE, kept);
+            boolean factsChanged = updateGameFacts(OBSERVED_STATE, kept,
+                    detected, stamp);
             boolean firstObservation = OBSERVED_STATE.isEmpty();
             OBSERVED_STATE = kept;
             boolean materialChange = firstObservation || !detected.isEmpty()
@@ -820,13 +854,16 @@ public final class Campaign {
         EVENTS.restore(oldEvents);
         MEMORY.restore(oldMemory);
         FACTS.restore(oldFacts);
+        CONTINUITY.restore(oldContinuity);
         eventDirty = oldDirty;
         nextEventCheckpointNanos = oldNextCheckpoint;
         return false;
     }
 
     /** Maintains a few current-state slots without inferring ownership or safety. */
-    private static boolean updateGameFacts(String beforeJson, String afterJson) {
+    private static boolean updateGameFacts(String beforeJson, String afterJson,
+                                           List<StoryEvent.Draft> detected,
+                                           String stamp) {
         Map<String, Object> before = beforeJson == null || beforeJson.isEmpty()
                 ? Map.of() : JsonParse.parseObject(beforeJson);
         Map<String, Object> after = JsonParse.parseObject(afterJson);
@@ -870,6 +907,28 @@ public final class Campaign {
             changed |= FACTS.upsert("game:injury:" + wound[0], text, "injury",
                     "game", 100, PAGES.size());
         }
+
+        for (StoryEvent.Draft event : detected) {
+            if (StoryEvent.KILL.equals(event.type) && character != null) {
+                String itemId = JsonParse.str(character, "primaryHandId", "");
+                String item = JsonParse.str(character, "primaryHand", "");
+                int kills = 1;
+                try { kills = Math.max(1, Integer.parseInt(event.facts.getOrDefault("count", "1"))); }
+                catch (NumberFormatException ignored) { }
+                for (int i = 0; i < Math.min(kills, 20) && !itemId.isEmpty() && !item.isEmpty(); i++) {
+                    changed |= CONTINUITY.record("weapon", itemId, item, stamp);
+                }
+            } else if (StoryEvent.VEHICLE_ENTERED.equals(event.type) && vehicle != null) {
+                String vehicleId = JsonParse.str(vehicle, "vehicleId", "");
+                if (!vehicleId.isEmpty()) {
+                    changed |= CONTINUITY.record("vehicle", vehicleId,
+                            JsonParse.str(vehicle, "model", "vehicle"), stamp);
+                }
+            } else if (StoryEvent.SLEEP_STARTED.equals(event.type)
+                    && !event.placeId.isEmpty() && !event.place.isEmpty()) {
+                changed |= CONTINUITY.record("rest", event.placeId, event.place, stamp);
+            }
+        }
         return changed;
     }
 
@@ -886,15 +945,37 @@ public final class Campaign {
             String stamp, String placeId, String place, String source) {
         load();
         EventJournal.Snapshot old = EVENTS.snapshot();
+        ContinuityMemory.Snapshot oldContinuity = CONTINUITY.snapshot();
         try {
             EVENTS.record(StoryEvent.draft(type, stamp, placeId, place,
                     summary, source, importance));
+            if (isRoutineAction(type) && placeId != null && !placeId.isEmpty()) {
+                CONTINUITY.record("routine", type + "@" + placeId,
+                        routineLabel(type, place), stamp);
+            }
             if (save()) return true;
         } catch (Throwable t) {
             Config.log("campaign: event rejected - " + t);
         }
         EVENTS.restore(old);
+        CONTINUITY.restore(oldContinuity);
         return false;
+    }
+
+    private static boolean isRoutineAction(String type) {
+        return StoryEvent.CRAFTED.equals(type) || StoryEvent.REPAIRED.equals(type)
+                || StoryEvent.FARMED.equals(type) || StoryEvent.FIRE_STARTED.equals(type);
+    }
+
+    private static String routineLabel(String type, String place) {
+        String verb = switch (type) {
+            case StoryEvent.CRAFTED -> "crafted";
+            case StoryEvent.REPAIRED -> "made repairs";
+            case StoryEvent.FARMED -> "tended crops";
+            case StoryEvent.FIRE_STARTED -> "lit a fire";
+            default -> "worked";
+        };
+        return verb + " at " + ((place == null || place.isBlank()) ? "the same place" : place);
     }
 
     /** Exact pending batch captured for one provider request. */
@@ -1068,6 +1149,7 @@ public final class Campaign {
         List<Page> oldPages = new ArrayList<>(PAGES);
         LinkedHashSet<String> oldCanon = new LinkedHashSet<>(CANON);
         FactMemory.Snapshot oldFacts = FACTS.snapshot();
+        ThreadMemory.Snapshot oldThreads = THREADS.snapshot();
         List<String> oldTodo = new ArrayList<>(TODO);
         List<String> oldDirections = new ArrayList<>(DIRECTIONS);
         EventJournal.Snapshot oldEvents = EVENTS.snapshot();
@@ -1087,6 +1169,7 @@ public final class Campaign {
             PAGES.clear(); PAGES.addAll(oldPages);
             CANON.clear(); CANON.addAll(oldCanon);
             FACTS.restore(oldFacts);
+            THREADS.restore(oldThreads);
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
             EVENTS.restore(oldEvents);
@@ -1102,6 +1185,7 @@ public final class Campaign {
             PAGES.clear(); PAGES.addAll(oldPages);
             CANON.clear(); CANON.addAll(oldCanon);
             FACTS.restore(oldFacts);
+            THREADS.restore(oldThreads);
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
             EVENTS.restore(oldEvents);
@@ -1290,10 +1374,12 @@ public final class Campaign {
                 }
                 LinkedHashSet<String> old = new LinkedHashSet<>(CANON);
                 FactMemory.Snapshot oldFacts = FACTS.snapshot();
+                ThreadMemory.Snapshot oldThreads = THREADS.snapshot();
                 boolean added = addCanonInMemory(List.of(prefix + s));
                 if (added && !save()) {
                     CANON.clear(); CANON.addAll(old);
                     FACTS.restore(oldFacts);
+                    THREADS.restore(oldThreads);
                     return "could not save that note";
                 }
                 return added ? "kept as canon" : "already kept as canon";
@@ -1449,6 +1535,8 @@ public final class Campaign {
         if (Settings.knowledge() >= Settings.KNOW_MEMORY) sb.append(MEMORY.prompt());
         sb.append(seenForPrompt());
         sb.append(FACTS.prompt());
+        sb.append(THREADS.prompt(PAGES.size()));
+        sb.append(CONTINUITY.prompt());
 
         int first = 0;
         if (charBudget > 0) {

@@ -176,7 +176,10 @@ public final class StateReader {
             j.put("zombieKills", p.getZombieKills());
             j.put("asleep", p.isAsleep());
             InventoryItem primary = p.getPrimaryHandItem();
-            if (primary != null) j.put("primaryHand", boundedLabel(displayName(primary)));
+            if (primary != null) {
+                j.put("primaryHand", boundedLabel(displayName(primary)));
+                j.put("primaryHandId", Integer.toString(primary.getID()));
+            }
             j.endObj();
         } catch (Throwable t) {
             j.rollback(checkpoint);
@@ -447,6 +450,7 @@ public final class StateReader {
                 j.put("modelUnknown", "The game did not provide a human-readable "
                         + "make or model. Call it only a vehicle.");
             }
+            j.put("vehicleId", Short.toString(v.getId()));
 
             try { j.put("driving", v.isDriver(p)); } catch (Throwable ignored) { }
             try { j.put("engineRunning", v.isEngineStarted()); } catch (Throwable ignored) { }

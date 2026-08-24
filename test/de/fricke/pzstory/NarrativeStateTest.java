@@ -18,7 +18,8 @@ public final class NarrativeStateTest {
                   "readErrors":["private path"],
                   "character":{"username":"account","forename":"Sam",
                                "female":false,"pronouns":"they/them",
-                               "hoursSurvived":87,"zombieKills":8,"inventoryWeight":12.4},
+                               "hoursSurvived":87,"zombieKills":8,"inventoryWeight":12.4,
+                               "primaryHand":"Hammer","primaryHandId":"445"},
                   "position":{"x":100,"y":200,"z":1,"chunkX":12,"cellY":3,
                               "floor":"one floor up","room":"kitchen","roomId":"17",
                               "building":{"id":88,"x":90,"y":190,"w":10,"h":20}},
@@ -27,6 +28,7 @@ public final class NarrativeStateTest {
                   "theDead":{"withinSight":"a few"},
                   "nutrition":{"calories":-1200},
                   "weather":{"temperatureC":7,"feels":"cold"},
+                  "inAVehicle":{"model":"Chevalier Nyala","vehicleId":"7"},
                   "bags":[{"name":"Duffel Bag","id":"481","contents":["Map"]}],
                   "health":{"overall":72,"infected":false,"partsBleeding":1,
                             "wounds":[{"part":"hand","health":70,"pain":3,
@@ -58,6 +60,9 @@ public final class NarrativeStateTest {
                 character.get("timeSurvived"));
         T.eq("kill count becomes semantic", "seasoned",
                 character.get("experienceWithTheDead"));
+        T.ok("held-item local identity removed",
+                !character.containsKey("primaryHandId")
+                        && "Hammer".equals(character.get("primaryHand")));
 
         Map<String, Object> position = JsonParse.map(sent, "position");
         T.ok("exact coordinates removed", position != null && !position.containsKey("x"));
@@ -69,6 +74,10 @@ public final class NarrativeStateTest {
         T.ok("exact temperature removed", !weather.containsKey("temperatureC"));
         T.eq("semantic weather retained", "cold", weather.get("feels"));
         T.ok("nutrition telemetry removed", !sent.containsKey("nutrition"));
+        Map<String, Object> vehicle = JsonParse.map(sent, "inAVehicle");
+        T.ok("vehicle local identity removed",
+                vehicle != null && !vehicle.containsKey("vehicleId")
+                        && "Chevalier Nyala".equals(vehicle.get("model")));
 
         @SuppressWarnings("unchecked")
         Map<String, Object> bag = (Map<String, Object>) ((List<?>) sent.get("bags")).get(0);

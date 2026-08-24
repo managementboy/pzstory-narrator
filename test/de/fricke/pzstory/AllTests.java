@@ -12,6 +12,8 @@ public final class AllTests {
         ActionEventPolicyTest.run();
         FactMemoryTest.run();
         RepetitionGuardTest.run();
+        ThreadMemoryTest.run();
+        ContinuityMemoryTest.run();
         EventJournalTest.run();
         WorldMemoryTest.run();
         CampaignEventTest.run();

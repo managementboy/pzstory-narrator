@@ -60,6 +60,23 @@ public final class CampaignTest {
                     !Campaign.canon().contains("must not remain"));
             T.ok("recent wording guidance names prior title",
                     Campaign.repetitionGuidance().contains("Safe Page"));
+            Campaign.addCanon(List.of(
+                    "[thread] setup red-radio: the red radio repeats a name"));
+            T.ok("setup enters deliberate thread memory",
+                    Campaign.threadMemoryJson().contains("\"status\":\"open\""));
+            Campaign.addCanon(List.of(
+                    "[thread] payoff red-radio: the caller was identified"));
+            T.ok("matching payoff closes the setup",
+                    Campaign.threadMemoryJson().contains("\"status\":\"paid\""));
+            for (int i = 0; i < 3; i++) {
+                T.ok("routine action " + (i + 1) + " is stored", Campaign.recordEvent(
+                        StoryEvent.CRAFTED, "They crafted a spear.", 58,
+                        "1993-07-10 09:" + (40 + i), "room:garage", "the garage", "game"));
+            }
+            T.ok("three same-place actions become routine evidence",
+                    Campaign.history(20000).contains("repeatedly crafted at the garage"));
+            T.ok("routine prompt hides local place identity",
+                    !Campaign.history(20000).contains("room:garage"));
 
             Path store = fixture.resolve("pzstory/campaign.json");
             Path backup = fixture.resolve("pzstory/campaign.json.bak");
@@ -70,10 +87,13 @@ public final class CampaignTest {
             Files.createDirectories(blockedTmp);
             Files.writeString(blockedTmp.resolve("guard"), "x", StandardCharsets.UTF_8);
             String factsBeforeFailure = Campaign.factMemoryJson();
+            String threadsBeforeFailure = Campaign.threadMemoryJson();
+            String continuityBeforeFailure = Campaign.continuityMemoryJson();
             boolean failedCommit = Campaign.commitGeneratedPage(
                     Campaign.generation(), "", "Must Roll Back",
                     words("later", 60), "1993-07-10 10:00",
-                    List.of("must not remain"), "must not remain",
+                    List.of("must not remain",
+                            "[thread] setup rollback-key: must not remain"), "must not remain",
                     "{\"position\":{\"x\":2,\"y\":2,\"z\":0}}", 1);
             T.ok("disk failure rejects generated page", !failedCommit);
             T.eq("failed commit leaves archive unchanged", 1, Campaign.pageCount());
@@ -83,6 +103,10 @@ public final class CampaignTest {
                     !Campaign.canon().contains("must not remain"));
             T.eq("failed commit rolls structured facts back",
                     factsBeforeFailure, Campaign.factMemoryJson());
+            T.eq("failed commit rolls deliberate threads back",
+                    threadsBeforeFailure, Campaign.threadMemoryJson());
+            T.eq("failed commit leaves continuity evidence unchanged",
+                    continuityBeforeFailure, Campaign.continuityMemoryJson());
             String toggleBefore = Campaign.todoJson();
             T.ok("failed task edit reports failure", !Campaign.toggleTodo(1));
             T.eq("failed task edit rolls memory back", toggleBefore,

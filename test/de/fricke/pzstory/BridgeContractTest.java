@@ -65,6 +65,14 @@ public final class BridgeContractTest {
         T.ok("typed fact diagnostics are local and explicit",
                 api.contains("String factMemory()")
                         && probe.contains("decodeDiagnostic(\"factMemory\")"));
+        T.ok("setup/payoff diagnostics are local and explicit",
+                api.contains("String threadMemory()")
+                        && probe.contains("decodeDiagnostic(\"threadMemory\")")
+                        && probe.contains("STORY THREADS"));
+        T.ok("continuity evidence diagnostics keep counts local",
+                api.contains("String continuityMemory()")
+                        && probe.contains("decodeDiagnostic(\"continuityMemory\")")
+                        && probe.contains("CONTINUITY EVIDENCE"));
         T.ok("local observer is exposed",
                 api.contains("void observeWorld()")
                         && lua.contains("api(\"observeWorld\")"));

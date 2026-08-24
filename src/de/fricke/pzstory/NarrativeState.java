@@ -62,6 +62,7 @@ public final class NarrativeState {
                         : value < 100 ? "hardened" : "extensive");
             }
             character.remove("inventoryWeight");
+            character.remove("primaryHandId");
         }
 
         Map<String, Object> position = map(root, "position");
@@ -76,6 +77,9 @@ public final class NarrativeState {
 
         Map<String, Object> weather = map(root, "weather");
         if (weather != null) weather.remove("temperatureC");
+
+        Map<String, Object> vehicle = map(root, "inAVehicle");
+        if (vehicle != null) vehicle.remove("vehicleId");
 
         Object bags = root.get("bags");
         if (bags instanceof List<?> list) {

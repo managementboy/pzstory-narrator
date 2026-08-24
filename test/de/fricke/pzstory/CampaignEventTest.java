@@ -37,6 +37,13 @@ public final class CampaignEventTest {
             T.ok("game wound enters typed fact memory",
                     Campaign.factMemoryJson().contains("game:injury:partsBitten")
                             && Campaign.factMemoryJson().contains("\"source\":\"game\""));
+            T.ok("second kill with held item is observed",
+                    Campaign.observeState(armed(2), "1993-07-11 09:05:10"));
+            T.ok("third kill with same item is observed",
+                    Campaign.observeState(armed(3), "1993-07-11 09:05:20"));
+            T.ok("repeated kills establish weapon familiarity without exposing id",
+                    Campaign.history(20000).contains("becoming familiar")
+                            && !Campaign.history(20000).contains("item-445"));
             T.ok("meaningful changes are pending", Campaign.pendingEventCount() >= 3);
             EventJournal.Capture captured = Campaign.promptEvents();
             int capturedCount = captured.ids.size();
@@ -65,7 +72,7 @@ public final class CampaignEventTest {
 
             Map<String, Object> disk = JsonParse.parseObject(
                     Files.readString(store, StandardCharsets.UTF_8));
-            T.eq("successful mutation upgrades store to schema 3", 3,
+            T.eq("successful mutation upgrades store to schema 5", 5,
                     JsonParse.num(disk, "schema", 0));
             T.ok("event journal is embedded in campaign transaction",
                     disk.get("eventJournal") instanceof Map<?, ?>);
@@ -86,6 +93,7 @@ public final class CampaignEventTest {
 
             int pendingBeforeFailure = Campaign.pendingEventCount();
             String memoryBeforeFailure = Campaign.worldMemoryJson();
+            String continuityBeforeFailure = Campaign.continuityMemoryJson();
             Path blockedTmp = store.resolveSibling("campaign.json.tmp");
             Files.createDirectories(blockedTmp);
             Files.writeString(blockedTmp.resolve("guard"), "x", StandardCharsets.UTF_8);
@@ -95,6 +103,8 @@ public final class CampaignEventTest {
                     Campaign.pendingEventCount());
             T.eq("failed observation rolls world memory back", memoryBeforeFailure,
                     Campaign.worldMemoryJson());
+            T.eq("failed observation rolls continuity evidence back",
+                    continuityBeforeFailure, Campaign.continuityMemoryJson());
             deleteTree(blockedTmp);
         } catch (Throwable t) {
             T.ok("event campaign fixture completed: " + t, false);
@@ -106,6 +116,7 @@ public final class CampaignEventTest {
 
         migration();
         schema2Migration();
+        schema3Migration();
     }
 
     private static void migration() {
@@ -127,7 +138,7 @@ public final class CampaignEventTest {
             T.ok("first mutation after migration saves", Campaign.addTodo("migrated", "player"));
             Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
                     dir.resolve("campaign.json"), StandardCharsets.UTF_8));
-            T.eq("schema 1 saves forward as schema 3", 3,
+            T.eq("schema 1 saves forward as schema 5", 5,
                     JsonParse.num(upgraded, "schema", 0));
             T.ok("legacy canon becomes typed fact memory",
                     upgraded.get("factMemory") instanceof Map<?, ?>);
@@ -165,7 +176,7 @@ public final class CampaignEventTest {
                     Campaign.addTodo("checkpoint", "player"));
             Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
                     dir.resolve("campaign.json"), StandardCharsets.UTF_8));
-            T.eq("schema 2 saves forward as schema 3", 3,
+            T.eq("schema 2 saves forward as schema 5", 5,
                     JsonParse.num(upgraded, "schema", 0));
         } catch (Throwable t) {
             T.ok("schema 2 migration fixture completed: " + t, false);
@@ -173,6 +184,40 @@ public final class CampaignEventTest {
             Campaign.reset();
             System.clearProperty("pzstory.test.root");
             deleteTree(fixture);
+        }
+    }
+
+    private static void schema3Migration() {
+        T.group("Campaign 2.0 - schema 3 thread-memory migration");
+        Path fixture = null;
+        try {
+            fixture = Files.createTempDirectory("pzstory-schema3-");
+            Path dir = fixture.resolve("pzstory"); Files.createDirectories(dir);
+            String old = "{\"schema\":3,\"canon\":[\"the garage feels familiar\"],"
+                    + "\"factMemory\":{\"nextId\":2,\"facts\":[{\"id\":1,"
+                    + "\"type\":\"belief\",\"text\":\"the garage feels familiar\","
+                    + "\"source\":\"narrator\",\"confidence\":55,\"page\":1,"
+                    + "\"supersededBy\":0}]},\"pages\":[]}";
+            Files.writeString(dir.resolve("campaign.json"), old, StandardCharsets.UTF_8);
+            System.setProperty("pzstory.test.root", fixture.toString());
+            Campaign.reset(); Campaign.load();
+            T.eq("schema 3 typed facts survive", List.of("the garage feels familiar"),
+                    Campaign.canon());
+            T.ok("schema 3 begins with empty thread memory",
+                    Campaign.threadMemoryJson().contains("\"threads\":[]"));
+            T.ok("schema 3 migration checkpoints", Campaign.addTodo("checkpoint", "player"));
+            Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
+                    dir.resolve("campaign.json"), StandardCharsets.UTF_8));
+            T.eq("schema 3 saves forward as schema 5", 5,
+                    JsonParse.num(upgraded, "schema", 0));
+            T.ok("thread memory is added transactionally",
+                    upgraded.get("threadMemory") instanceof Map<?, ?>);
+            T.ok("continuity memory is added transactionally",
+                    upgraded.get("continuityMemory") instanceof Map<?, ?>);
+        } catch (Throwable t) {
+            T.ok("schema 3 migration fixture completed: " + t, false);
+        } finally {
+            Campaign.reset(); System.clearProperty("pzstory.test.root"); deleteTree(fixture);
         }
     }
 
@@ -220,6 +265,17 @@ public final class CampaignEventTest {
                  "utilities":{"mainsPower":false,"mainsWater":false},
                  "theDead":{}}
                 """;
+    }
+
+    private static String armed(int kills) {
+        return "{\"position\":{\"x\":12,\"y\":20,\"z\":1,\"room\":\"bedroom\","
+                + "\"roomId\":\"room-b\",\"floor\":\"one floor up\"},"
+                + "\"character\":{\"zombieKills\":" + kills
+                + ",\"asleep\":false,\"primaryHand\":\"Hammer\","
+                + "\"primaryHandId\":\"item-445\"},"
+                + "\"health\":{\"overall\":80,\"partsBitten\":1,"
+                + "\"partsScratched\":0,\"partsBleeding\":1},"
+                + "\"utilities\":{\"mainsPower\":false,\"mainsWater\":true}}";
     }
 
     private static String quote(String value) {

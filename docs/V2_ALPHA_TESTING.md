@@ -6,7 +6,7 @@ state sample. Use a copied save. Keep an untouched copy of the save and its
 
 ## Build and install
 
-The source release is `2.0.0-alpha.3` and bridge API is `7`. The tracked JAR on
+The source release is `2.0.0-alpha.4` and bridge API is `8`. The tracked JAR on
 the development branch is not usable until it has been rebuilt from this exact
 checkout.
 
@@ -51,9 +51,10 @@ Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
   visit count and shows up to six pending detected events with their factual
   summaries and significance.
 - F5: switch the visible Event Inbox between pending events and recent history.
-  Press again for structured Story Facts. Narrated events are labelled with
-  the page that consumed them; facts show type, provenance, confidence and
-  active/superseded status.
+  Continue pressing for Story Facts, Story Threads and Continuity Evidence.
+  Narrated events are labelled with the page that consumed them; facts show
+  type, provenance, confidence and active/superseded status. Continuity keeps
+  exact counts local while narrator prompts receive only qualitative evidence.
 - F9: provider-facing state, with privacy minimisation.
 - F10: provider connectivity test.
 - F11: local event journal.
@@ -76,3 +77,17 @@ steps.
 The carried-item sampler is bounded to 256 items, 128 distinct labels and four
 new-item events per observation. Moving the same item between carried bags must
 not create an acquisition event.
+
+## Story-memory checks
+
+1. Kill at least two zombies with the exact same held weapon. Continuity
+   Evidence should promote that specific weapon only after the second kill.
+2. Exit and re-enter the same vehicle twice. It may become familiar, but prose
+   must not claim ownership merely from use.
+3. Sleep twice in the same room. It may be called familiar shelter, never
+   automatically safe or a safehouse.
+4. Complete the same crafting, repair, farming or fire action three times at
+   one place. It becomes a routine only on the third recorded completion.
+5. When a page deliberately emits `[thread] setup short-key: description`,
+   confirm Story Threads shows it OPEN. A later exact-key `payoff` or `abandon`
+   entry must close it; unrelated keys must not.

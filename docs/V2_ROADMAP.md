@@ -30,20 +30,25 @@ Remaining before this milestone is promoted from alpha:
 
 ## Milestone 2 — Story memory
 
-Implemented in `2.0.0-alpha.3`:
+Implemented through `2.0.0-alpha.4`:
 
-- Schema-3 bounded typed facts for world, biography, people, possessions,
+- Schema-5 bounded typed facts for world, biography, people, possessions,
   injuries, knowledge, beliefs, promises and unresolved threads.
 - Provenance and confidence for game, player, media, narrator and migrated facts.
 - Conservative positive/negative contradiction supersession with source authority.
 - Lossless schema-1/schema-2 canon migration and atomic fact rollback.
 - Recent title/opening guidance plus exact repetition rejection.
 - Testing Mode Story Facts view with active/superseded status.
+- Schema-5 deliberate setup/payoff/abandonment records with stable keys,
+  bounded open-thread reminders and atomic rollback.
+- Evidence-based familiarity for the same weapon, vehicle and sleeping place;
+  repeated completed-action routines. Local identities and exact evidence
+  counts stay out of provider prompts.
+- Testing Mode Story Threads and Continuity Evidence views.
 
 Remaining:
 
-- Track weapons, vehicles, safehouses, injuries and routines across pages.
-- Maintain deliberate setup/payoff records and prevent abandoned foreshadowing.
+- Validate thread syntax, evidence cadence and narrator use in a real campaign.
 
 ## Milestone 3 — Campaign Director
 

@@ -2,7 +2,7 @@
   PZStory - Phase 2 harness.
 
   F8  - toggle the local Testing Mode overlay
-  F5  - cycle Pending Inbox, Recent History and structured Story Facts
+  F5  - cycle Pending, History, Facts, Threads and Continuity Evidence
   F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
   F11 - dump the local event journal (contains local ids)
@@ -183,6 +183,8 @@ local overlay = {
     place = nil,
     events = {},
     facts = {},
+    threads = {},
+    continuity = {},
     pending = 0,
     error = nil,
     mode = "pending",
@@ -208,7 +210,10 @@ local function refreshOverlay()
     local memory = decodeDiagnostic("worldMemory")
     local journal = decodeDiagnostic("eventJournal")
     local factRoot = decodeDiagnostic("factMemory")
-    if memory == nil or journal == nil or factRoot == nil then
+    local threadRoot = decodeDiagnostic("threadMemory")
+    local continuityRoot = decodeDiagnostic("continuityMemory")
+    if memory == nil or journal == nil or factRoot == nil or threadRoot == nil
+            or continuityRoot == nil then
         overlay.error = "diagnostics unavailable"
         return
     end
@@ -230,6 +235,8 @@ local function refreshOverlay()
     overlay.pending = tonumber(journal.pending) or 0
     overlay.events = {}
     overlay.facts = {}
+    overlay.threads = {}
+    overlay.continuity = {}
     if type(journal.events) == "table" then
         for i = #journal.events, 1, -1 do
             local event = journal.events[i]
@@ -244,6 +251,35 @@ local function refreshOverlay()
                     narrated = narrated,
                 })
                 if #overlay.events >= 6 then break end
+            end
+        end
+    end
+    local continuityMemory = continuityRoot.continuityMemory
+    if type(continuityMemory) == "table" and type(continuityMemory.entries) == "table" then
+        for i = #continuityMemory.entries, 1, -1 do
+            local entry = continuityMemory.entries[i]
+            if type(entry) == "table" then
+                table.insert(overlay.continuity, {
+                    kind = tostring(entry.kind or "evidence"):upper(),
+                    label = tostring(entry.label or ""),
+                    occurrences = tonumber(entry.occurrences) or 0,
+                })
+                if #overlay.continuity >= 8 then break end
+            end
+        end
+    end
+    local threadMemory = threadRoot.threadMemory
+    if type(threadMemory) == "table" and type(threadMemory.threads) == "table" then
+        for i = #threadMemory.threads, 1, -1 do
+            local thread = threadMemory.threads[i]
+            if type(thread) == "table" then
+                table.insert(overlay.threads, {
+                    key = tostring(thread.key or "thread"),
+                    status = tostring(thread.status or "open"):upper(),
+                    setup = tostring(thread.setup or ""),
+                    resolution = tostring(thread.resolution or ""),
+                })
+                if #overlay.threads >= 6 then break end
             end
         end
     end
@@ -309,11 +345,45 @@ local function drawOverlay()
         return
     end
     local view = overlay.mode == "recent" and "RECENT HISTORY"
-        or (overlay.mode == "facts" and "STORY FACTS" or "PENDING INBOX")
+        or (overlay.mode == "facts" and "STORY FACTS"
+        or (overlay.mode == "threads" and "STORY THREADS"
+        or (overlay.mode == "continuity" and "CONTINUITY EVIDENCE" or "PENDING INBOX")))
     shadowText(UIFont.Small, x, y, view .. "  |  PENDING: " .. overlay.pending,
         overlay.pending > 0 and 1 or 0.6, overlay.pending > 0 and 0.8 or 0.9, 0.35, false)
     y = y + 18
-    if overlay.mode == "facts" then
+    if overlay.mode == "continuity" then
+        if #overlay.continuity == 0 then
+            shadowText(UIFont.Small, x, y, "(no repeated evidence)", 0.7, 0.7, 0.7, false)
+        else
+            for _, entry in ipairs(overlay.continuity) do
+                shadowText(UIFont.Small, x, y,
+                    entry.kind .. "  OBSERVATIONS: " .. entry.occurrences,
+                    0.45, 0.9, 1, false)
+                y = y + 17
+                local label = entry.label:gsub("[\r\n]", " ")
+                if #label > 88 then label = label:sub(1, 85) .. "..." end
+                shadowText(UIFont.Small, x + 14, y, label, 0.55, 0.8, 0.9, false)
+                y = y + 17
+            end
+        end
+    elseif overlay.mode == "threads" then
+        if #overlay.threads == 0 then
+            shadowText(UIFont.Small, x, y, "(no deliberate threads)", 0.7, 0.7, 0.7, false)
+        else
+            for _, thread in ipairs(overlay.threads) do
+                local open = thread.status == "OPEN"
+                local r, g, b = open and 1 or 0.55, open and 0.75 or 0.9, open and 0.3 or 0.65
+                shadowText(UIFont.Small, x, y,
+                    thread.key:upper() .. "  " .. thread.status, r, g, b, false)
+                y = y + 17
+                local detail = open and thread.setup or thread.resolution
+                detail = detail:gsub("[\r\n]", " ")
+                if #detail > 88 then detail = detail:sub(1, 85) .. "..." end
+                shadowText(UIFont.Small, x + 14, y, detail, r, g, b, false)
+                y = y + 17
+            end
+        end
+    elseif overlay.mode == "facts" then
         if #overlay.facts == 0 then
             shadowText(UIFont.Small, x, y, "(no story facts)", 0.7, 0.7, 0.7, false)
         else
@@ -350,7 +420,7 @@ local function drawOverlay()
         end
     end
     y = y + 4
-    shadowText(UIFont.Small, x, y, "F5: inbox/history/facts  |  F8: close",
+    shadowText(UIFont.Small, x, y, "F5: inbox/history/facts/threads/evidence  |  F8: close",
         0.65, 0.75, 0.8, false)
 end
 
@@ -364,7 +434,9 @@ end
 local function switchInbox()
     if not overlay.visible then overlay.visible = true end
     overlay.mode = overlay.mode == "pending" and "recent"
-        or (overlay.mode == "recent" and "facts" or "pending")
+        or (overlay.mode == "recent" and "facts"
+        or (overlay.mode == "facts" and "threads"
+        or (overlay.mode == "threads" and "continuity" or "pending")))
     overlay.nextRefresh = 0
     refreshOverlay()
     notify("PZStory Inbox: " .. overlay.mode:upper(), true)
