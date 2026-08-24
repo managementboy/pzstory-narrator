@@ -47,7 +47,7 @@ your accounts or local server:
       "apiKey": "",
       "baseUrl": "http://127.0.0.1:11434/v1",
       "maxTokens": 1800,
-      "maxInputChars": 24000,
+      "maxInputChars": 48000,
       "maxRequestBytes": 500000,
       "systemMode": "prepend_to_user",
       "streamUsage": false
@@ -116,3 +116,44 @@ forwarding their exact counters.
 Use a loopback profile when none of this should leave the computer. The F9
 development probe described in `dev/README.md` prints the exact live-state
 projection for inspection; it does not print keys.
+
+## Experimental local Stheno setup
+
+`Llama-3.1-8B-Stheno-v3.4` is a creative-writing and roleplay fine-tune that
+can run locally through Ollama. On an 8 GB graphics card, use its
+[Q4_K_M GGUF](https://huggingface.co/bartowski/Llama-3.1-8B-Stheno-v3.4-GGUF/blob/main/Llama-3.1-8B-Stheno-v3.4-Q4_K_M.gguf).
+Install the model and create PZStory's 16K-context alias:
+
+```powershell
+# First place Llama-3.1-8B-Stheno-v3.4-Q4_K_M.gguf in ollama/.
+ollama create pzstory-stheno -f ollama/PZStory-Stheno.Modelfile
+```
+
+Use the GGUF file from the linked Bartowski/Hugging Face conversion. Import it
+directly: the similarly named community Ollama package uses a generic roleplay
+wrapper rather than Llama 3.1's chat template. The supplied Modelfile restores
+the proper system/user message boundaries and does not add a roleplay system
+message of its own.
+
+Then use `pzstory-stheno:latest` as the local profile's `model`. Keep
+`maxInputChars` at 48000 and `systemMode` at `native`; PZStory's strict terminal
+reply validator protects campaign state when a small model omits or reorders a
+required section.
+
+Stheno is technically compatible, but it is not currently approved as the
+default PZStory narrator. In the synthetic acceptance scene it repeatedly
+invented unseen furnishings, past events and survivor actions even after a
+clean GGUF import with the correct chat template and low temperature. Keep a
+known-good profile available and treat Stheno as an experimental prose model
+until it passes the acceptance check repeatedly. Structural failures are
+discarded, but no parser can reliably identify every plausible-sounding
+invented world detail.
+
+Developers can run `dev/LocalModelAcceptance.java` against an installed local
+model. The check uses PZStory's production charter, prompt builder and terminal
+reply validator with a synthetic state; it never reads a save or an API key.
+
+The PZStory source remains CC0, but the Stheno weights are separately licensed
+CC BY-NC 4.0. They are not included with the mod. Players install the model
+themselves, and commercial users must choose a model whose licence permits
+their intended use.

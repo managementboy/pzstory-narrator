@@ -489,8 +489,11 @@ public final class Prompt {
         // untitled page and remembered nothing from it. The charter says all
         // this at the top, two thousand words earlier.
         sb.append("FORMAT, and it is not optional. Reply with these headings, "
-                + "written exactly, each on its own line:\n"
-                + "### TITLE   (then the title on the NEXT line - three or four "
+                + "written exactly, each on its own line:\n");
+        if (first) {
+            sb.append("### PREMISE (the 60-100 word foundation, first page only)\n");
+        }
+        sb.append("### TITLE   (then the title on the NEXT line - three or four "
                 + "words, not a sentence)\n"
                 + "### PAGE    (the prose)\n"
                 + "### CANON   (see below)\n"
@@ -498,11 +501,11 @@ public final class Prompt {
                 + "A reply with no ### TITLE line is a broken reply.\n"
                 + "CANON is the story's memory and it is NOT optional on a page "
                 + "where anything happened. Ask one question: is there anything "
-                + "in this page that a later page could contradict? Something he "
-                + "did for the first time, something he now believes, a habit "
+                + "in this page that a later page could contradict? Something they "
+                + "did for the first time, something they now believe, a habit "
                 + "that has shown itself twice, a fear that has a shape, a name "
-                + "you gave someone. If yes, write it as one short line - \"he "
-                + "has killed with the branch, and it was easier than he "
+                + "you gave someone. If yes, write it as one short line - \"they "
+                + "have killed with the branch, and it was easier than they "
                 + "expected\". Only leave it empty on a page where genuinely "
                 + "nothing was established. Never record what the state block "
                 + "already says; that is re-read every time. Prefix each line "
@@ -511,13 +514,22 @@ public final class Prompt {
                 + "or [thread]. A deliberate setup uses exactly: [thread] "
                 + "setup short-key: description. Do not create one merely to "
                 + "make the page sound mysterious.\n");
-        sb.append("WRITE IT IN THE PRESENT TENSE. He is standing there right "
-                + "now, this second, with the game paused around him. \"He "
-                + "stands\", \"the room is\", \"the light comes through\" - not "
-                + "\"he stood\", \"the room was\". For anything already "
-                + "finished use the present perfect: \"he has taken\", \"the "
+        sb.append("WRITE IT IN THE PRESENT TENSE. The survivor is standing there right "
+                + "now, this second, with the game paused around them. \"They "
+                + "stand\", \"the room is\", \"the light comes through\" - not "
+                + "\"they stood\", \"the room was\". For anything already "
+                + "finished use the present perfect: \"they have taken\", \"the "
                 + "power has gone\". Do not slip into the past tense "
                 + "half way down the page.\n");
+        sb.append("FINAL GROUNDING CHECK. The STATE is the complete physical world "
+                + "available to this page. Every object, furnishing, opening, item "
+                + "of clothing and vehicle you name must appear in STATE; the only "
+                + "exceptions are air, light, sound, smell and weather. Every action "
+                + "by the survivor must already appear in STATE or CHANGE. Do not "
+                + "invent a past event, a memory of an event, or how they arrived. "
+                + "Use the pronouns stated above. Prefix every required heading with "
+                + "the exact three characters ###. On the first page, the first "
+                + "heading is ### PREMISE. End only after the exact ### TODO section.\n");
         return sb.toString();
     }
 

@@ -1,0 +1,36 @@
+# PZStory's tested local narrator profile for an 8 GB graphics card.
+# The base weights remain separately installed under their CC BY-NC 4.0 terms.
+FROM ./Llama-3.1-8B-Stheno-v3.4-Q4_K_M.gguf
+
+# The community Ollama package uses a generic roleplay wrapper that flattens
+# chat messages. Restore the native Llama 3.1 Instruct message boundaries so
+# PZStory's system charter remains distinct from the live-state user turn.
+TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>
+{{- end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 }}
+{{- if eq .Role "user" }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Content }}<|eot_id|>{{ if $last }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ end }}
+{{- else if eq .Role "assistant" }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ .Content }}{{ if not $last }}<|eot_id|>{{ end }}
+{{- end }}
+{{- end }}"""
+
+PARAMETER stop <|start_header_id|>
+PARAMETER stop <|end_header_id|>
+PARAMETER stop <|eot_id|>
+SYSTEM ""
+
+# PZStory sends a long narrator charter plus bounded campaign context. 16K is
+# enough for that workload without reserving the memory required by 128K.
+PARAMETER num_ctx 16384
+
+# Prefer reliable adherence to PZStory's strict five-section reply contract.
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9

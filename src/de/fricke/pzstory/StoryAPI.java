@@ -304,10 +304,14 @@ public class StoryAPI {
         // left on history. Local laptop models retain their tighter budget;
         // hosted profiles use the explicit maxInputChars setting rather than
         // the old unlimited-history sentinel.
-        int inputLimit = p == null ? 24000 : p.maxInputChars;
+        int inputLimit = p == null ? 48000 : p.maxInputChars;
         if (p != null && "openai-compatible".equals(p.kind)
                 && Endpoint.isLocal(p.baseUrl)) {
-            inputLimit = Math.min(inputLimit, 24000);
+            // The fixed narrator charter, world rules and live turn now exceed
+            // 24k characters before a single history page is attached. A 48k
+            // character envelope remains comfortable inside a 16k-token local
+            // context while leaving room for visible output.
+            inputLimit = Math.min(inputLimit, 48000);
         }
         int historyBudget = Math.max(0,
                 inputLimit - systemPrompt.length() - tailPrompt.length());
