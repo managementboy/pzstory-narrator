@@ -58,6 +58,29 @@ Read live from the running game, every time you press WRITE:
 Plus **the interval**: what changed since the last page. The snapshot is a
 photograph; the delta is what the page is actually about.
 
+## Version 2.0 alpha
+
+The 2.0 development line adds memory of events between pages. A lightweight
+local observer records factual transitions such as kills, wounds, pursuit,
+vehicle use, utility failure, important noises, skill improvement and movement
+between stable places. It never starts a provider request by itself.
+
+Events remain pending until a valid generated page and the event
+acknowledgements are saved in one transaction. STOP, provider failure, invalid
+output, a save switch or a disk error consumes none of them. Events arriving
+while a page is streaming belong to the next page.
+
+The same schema adds structured place memory. Stable room/building identities
+remain local; providers receive only human-readable labels and qualitative
+familiarity. Existing schema-1 campaigns migrate on their next successful
+write.
+
+This is `2.0.0-alpha.1`, the first foundation milestone—not the completed 2.0
+feature set. Campaign Director mode, grounded objectives, character memory,
+the PDA timeline and opt-in world artifacts are tracked in
+[`docs/V2_ROADMAP.md`](docs/V2_ROADMAP.md). Use a copied save and follow
+[`docs/V2_ALPHA_TESTING.md`](docs/V2_ALPHA_TESTING.md).
+
 ## Requirements
 
 - Project Zomboid **Build 42** (developed against 42.20.3)
@@ -139,8 +162,8 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`1.25.0-rc1`) is for people and changes whenever anything ships. **Bridge
-API** (`4`) changes
+(`2.0.0-alpha.1`) is for people and changes whenever anything ships. **Bridge
+API** (`5`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer
 forces a firmware mismatch, and an incompatible pairing can no longer load.
@@ -164,10 +187,11 @@ tools/        test.sh (unit tests) and verify.sh (release integrity)
 build.sh      javac + jar, then verify
 ```
 
-`dev/PZStory_Probe.lua` adds F9 (dump the provider-facing live-state projection
-to the console) and F10 (self-test the Java bridge). Drop it in beside
-`PZStoryBook.lua` if you are working on the mod; leave it out if you are
-playing.
+`dev/PZStory_Probe.lua` adds F9 (provider-facing live-state projection), F10
+(Java bridge self-test), F11 (local event journal) and F12 (local world memory).
+Drop it in beside `PZStoryBook.lua` if you are working on the mod; leave it out
+if you are playing. F11/F12 contain local stable ids and should be treated as
+private diagnostics.
 
 ## Tests
 

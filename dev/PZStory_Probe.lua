@@ -3,6 +3,8 @@
 
   F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
+  F11 - dump the local event journal (contains local ids)
+  F12 - dump structured place memory (contains local ids)
 
   There is still no UI. The point of this file is to prove the whole chain
   end to end - key, network, SSE parsing, background thread, per-frame drain -
@@ -14,6 +16,8 @@
 local TAG = "[PZStoryProbe] "
 local SNAPSHOT_BIND = "PZStory: provider state to log"
 local TEST_BIND     = "PZStory: model self-test"
+local EVENTS_BIND   = "PZStory: local event journal to log"
+local MEMORY_BIND   = "PZStory: local world memory to log"
 
 local function say(...)
     local parts = {}
@@ -34,6 +38,8 @@ end
 
 table.insert(keyBinding, { value = SNAPSHOT_BIND, key = Keyboard.KEY_F9 })
 table.insert(keyBinding, { value = TEST_BIND,     key = Keyboard.KEY_F10 })
+table.insert(keyBinding, { value = EVENTS_BIND,   key = Keyboard.KEY_F11 })
+table.insert(keyBinding, { value = MEMORY_BIND,   key = Keyboard.KEY_F12 })
 
 -- ---------------------------------------------------------------- snapshot
 
@@ -141,6 +147,25 @@ local function runSelfTest()
     notify("PZStory: asking the model...", true)
 end
 
+-- ---------------------------------------------------------- 2.0 local data
+
+local function dumpLocal(method, tag, label)
+    if PZStory == nil or type(PZStory[method]) ~= "function" then
+        notify("PZStory: 2.0 bridge not loaded", false)
+        return
+    end
+    local value
+    local ok = pcall(function() value = PZStory[method]() end)
+    if not ok then
+        notify("PZStory: could not read " .. label, false)
+        return
+    end
+    -- Unlike F9, these diagnostics intentionally contain stable LOCAL ids.
+    -- They are never part of a provider request. Treat the console as private.
+    print("[" .. tag .. "] " .. tostring(value or ""))
+    notify("PZStory: " .. label .. " written", true)
+end
+
 -- ------------------------------------------------------------------ wiring
 
 Events.OnGameStart.Add(function()
@@ -158,6 +183,12 @@ end)
 Events.OnKeyPressed.Add(function(key)
     if key == getCore():getKey(SNAPSHOT_BIND) then takeSnapshot("keypress") end
     if key == getCore():getKey(TEST_BIND) then runSelfTest() end
+    if key == getCore():getKey(EVENTS_BIND) then
+        dumpLocal("eventJournal", "PZStoryEvents", "event journal")
+    end
+    if key == getCore():getKey(MEMORY_BIND) then
+        dumpLocal("worldMemory", "PZStoryWorldMemory", "world memory")
+    end
 end)
 
 Events.OnTick.Add(onTick)

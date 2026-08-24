@@ -77,7 +77,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "4"
+local NEEDS_API = "5"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -2007,6 +2007,8 @@ local BOOK_BIND = "PZStory: open the book"
 table.insert(keyBinding, { value = BOOK_BIND, key = Keyboard.KEY_F7 })
 
 local instance = nil
+local observer = nil
+local nextObserverAt = 0
 
 local function toggle()
     if getPlayer() == nil then return end
@@ -2065,9 +2067,16 @@ end)
 -- showing the first one's book.
 Events.OnGameStart.Add(function()
     instance = nil
+    observer = nil
+    nextObserverAt = 0
     local f = api("onGameStart")
     if f then
         pcall(f)
+        observer = api("observeWorld")
+        if observer then
+            pcall(observer)
+            nextObserverAt = getTimestampMs() + 5000
+        end
     else
         print("[PZStory] JAR bridge is " .. tostring(javaApi()) .. " but the interface needs "
               .. NEEDS_API .. " - restart Project Zomboid (loading a save reloads"
@@ -2077,5 +2086,15 @@ end)
 
 -- MUST be OnTickEvenPaused: OnTick does not fire at speed zero.
 Events.OnTickEvenPaused.Add(function()
+    -- 2.0 event memory is entirely local. Throttle before crossing the
+    -- Lua/Java bridge, and do no world scan while the simulation is paused.
+    -- Java enforces the same cadence as a second line of defence.
+    if observer ~= nil and getGameSpeed() > 0 then
+        local now = getTimestampMs()
+        if now >= nextObserverAt then
+            nextObserverAt = now + 5000
+            pcall(observer)
+        end
+    end
     if instance ~= nil and instance.isOpen then instance:drain() end
 end)

@@ -61,6 +61,19 @@ public final class BridgeContractTest {
                 api.contains("stored ? null : Llm.CompletionResult.failure"));
         T.ok("privacy preview is exposed",
                 api.contains("String providerPreview()"));
+        T.ok("local observer is exposed",
+                api.contains("void observeWorld()")
+                        && lua.contains("api(\"observeWorld\")"));
+        T.ok("observer uses lightweight state and never starts a request",
+                api.contains("StateReader.eventSnapshot()")
+                        && !method(api, "public static void observeWorld()")
+                                .contains("Llm.start"));
+        T.ok("request captures pending events before provider start",
+                api.contains("EventJournal.Capture capturedEvents")
+                        && api.contains("capturedEvents.ids"));
+        T.ok("page commit consumes its exact event batch",
+                read("src/de/fricke/pzstory/Campaign.java")
+                        .contains("EVENTS.markNarrated(consumedEventIds"));
         T.ok("Gemini thought summaries cannot enter page text",
                 llm.contains("pm.get(\"thought\")")
                         && llm.contains("j.put(\"includeThoughts\", false)"));
@@ -72,5 +85,12 @@ public final class BridgeContractTest {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    private static String method(String source, String signature) {
+        int start = source.indexOf(signature);
+        if (start < 0) return "";
+        int next = source.indexOf("\n    public static", start + signature.length());
+        return next < 0 ? source.substring(start) : source.substring(start, next);
     }
 }

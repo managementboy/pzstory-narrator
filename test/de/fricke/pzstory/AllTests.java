@@ -8,6 +8,9 @@ public final class AllTests {
         PageResultTest.run();
         NarrativeStateTest.run();
         DeltaTest.run();
+        EventJournalTest.run();
+        WorldMemoryTest.run();
+        CampaignEventTest.run();
         CampaignTest.run();
         FileSafetyTest.run();
         EndpointTest.run();

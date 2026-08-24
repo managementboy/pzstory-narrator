@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,7 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
+    private static final int CURRENT_SCHEMA = 2;
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
@@ -31,6 +33,7 @@ public final class Campaign {
     private static final int MAX_SEEN = 400;
     private static final int MAX_DIRECTIONS = 20;
     private static final int MAX_STANDING = 20;
+    private static final long EVENT_CHECKPOINT_NANOS = 60_000_000_000L;
 
     /** One written page. */
     public static final class Page {
@@ -65,6 +68,8 @@ public final class Campaign {
     private static Path root;
     private static final List<Page> PAGES = new ArrayList<>();
     private static final LinkedHashSet<String> CANON = new LinkedHashSet<>();
+    private static final EventJournal EVENTS = new EventJournal();
+    private static final WorldMemory MEMORY = new WorldMemory();
 
     // The player note channel. Three types, three lifetimes - getting the
     // lifetime wrong is the whole failure mode, so they are stored apart
@@ -79,6 +84,8 @@ public final class Campaign {
     /** True only when a corrupt store could not be backed up safely. */
     private static boolean persistenceBlocked = false;
     private static boolean backupRecoveryAttempted = false;
+    private static boolean eventDirty = false;
+    private static long nextEventCheckpointNanos = 0;
 
     /**
      * Which campaign this is, counting from process start.
@@ -132,16 +139,21 @@ public final class Campaign {
         DIRECTIONS.clear();
         STANDING.clear();
         SEEN.clear();
+        EVENTS.clear();
+        MEMORY.clear();
         OPENING = "";
         SCENARIO = "";
         PREMISE = "";
         LAST_STATE = "";
+        OBSERVED_STATE = "";
         TODO.clear();
         ACHIEVED.clear();
         DECLINED.clear();
         loaded = false;
         persistenceBlocked = false;
         backupRecoveryAttempted = false;
+        eventDirty = false;
+        nextEventCheckpointNanos = 0;
     }
 
     // ------------------------------------------------------------------ load
@@ -157,8 +169,8 @@ public final class Campaign {
             }
             Map<String, Object> m = JsonParse.parseObject(
                     BoundedFiles.readUtf8(p, MAX_CAMPAIGN_BYTES));
-            int schema = JsonParse.num(m, "schema", 1);
-            if (schema != 1) {
+            int schema = schema(m.get("schema"));
+            if (schema < 1 || schema > CURRENT_SCHEMA) {
                 throw new IllegalStateException("unsupported campaign schema " + schema);
             }
 
@@ -179,6 +191,24 @@ public final class Campaign {
             String nextScenario = field(m, "scenario", 64);
             String nextPremise = field(m, "premise", 32000);
             String nextLastState = field(m, "lastState", MAX_LAST_STATE_CHARS);
+            String nextObservedState = schema >= 2
+                    ? field(m, "observedState", MAX_LAST_STATE_CHARS)
+                    : nextLastState;
+            if (!nextObservedState.isEmpty() && Delta.keep(nextObservedState) == null) {
+                throw new IllegalStateException("observedState is not valid JSON state");
+            }
+            EventJournal nextEvents = new EventJournal();
+            WorldMemory nextMemory = new WorldMemory();
+            if (schema >= 2) {
+                nextEvents.load(m.get("eventJournal"));
+                nextMemory.load(m.get("worldMemory"));
+            } else if (!nextObservedState.isEmpty()) {
+                // Migration is best-effort: a 1.x continuity checkpoint was
+                // never required to contain a position, and the book itself
+                // must not be rejected merely because no place can be derived.
+                try { nextMemory.observe(nextObservedState, ""); }
+                catch (Throwable ignored) { nextMemory.clear(); }
+            }
             List<String> nextTodo = stringList(m.get("todo"), "todo", 100, 512);
             List<String> nextAchieved = stringList(
                     m.get("achieved"), "achieved", 100, 512);
@@ -216,6 +246,8 @@ public final class Campaign {
             DIRECTIONS.clear(); DIRECTIONS.addAll(nextDirections);
             STANDING.clear(); STANDING.addAll(nextStanding);
             SEEN.clear(); SEEN.addAll(nextSeen);
+            EVENTS.restore(nextEvents.snapshot());
+            MEMORY.restore(nextMemory.snapshot());
             TODO.clear(); TODO.addAll(nextTodo);
             ACHIEVED.clear(); ACHIEVED.addAll(nextAchieved);
             DECLINED.clear(); DECLINED.addAll(nextDeclined);
@@ -223,14 +255,20 @@ public final class Campaign {
             SCENARIO = nextScenario;
             PREMISE = nextPremise;
             LAST_STATE = nextLastState;
+            OBSERVED_STATE = nextObservedState;
             trimOldest(CANON, MAX_CANON);
             trimOldest(SEEN, MAX_SEEN);
             trimOldest(DIRECTIONS, MAX_DIRECTIONS);
             trimOldest(STANDING, MAX_STANDING);
             loaded = true;
             persistenceBlocked = false;
+            eventDirty = false;
+            nextEventCheckpointNanos = System.nanoTime() + EVENT_CHECKPOINT_NANOS;
             Config.log("campaign: loaded " + PAGES.size() + " page(s), "
-                    + CANON.size() + " canon entries from " + root());
+                    + CANON.size() + " canon entries, " + EVENTS.pendingCount()
+                    + " pending event(s) from " + root()
+                    + (schema < CURRENT_SCHEMA ? " (migrating schema " + schema
+                            + " -> " + CURRENT_SCHEMA + ")" : ""));
         } catch (Throwable t) {
             clearLoadedData();
             loaded = true;
@@ -273,6 +311,8 @@ public final class Campaign {
         DIRECTIONS.clear();
         STANDING.clear();
         SEEN.clear();
+        EVENTS.clear();
+        MEMORY.clear();
         TODO.clear();
         ACHIEVED.clear();
         DECLINED.clear();
@@ -280,6 +320,9 @@ public final class Campaign {
         SCENARIO = "";
         PREMISE = "";
         LAST_STATE = "";
+        OBSERVED_STATE = "";
+        eventDirty = false;
+        nextEventCheckpointNanos = 0;
     }
 
     private static String field(Object object, String key, int maxChars) {
@@ -288,6 +331,19 @@ public final class Campaign {
             throw new IllegalStateException(key + " exceeds " + maxChars + " characters");
         }
         return value;
+    }
+
+    private static int schema(Object value) {
+        if (value == null) return 1;
+        if (!(value instanceof Number number)) {
+            throw new IllegalStateException("campaign schema is not a number");
+        }
+        double raw = number.doubleValue();
+        if (!Double.isFinite(raw) || raw != Math.rint(raw)
+                || raw < Integer.MIN_VALUE || raw > Integer.MAX_VALUE) {
+            throw new IllegalStateException("campaign schema is not an integer");
+        }
+        return number.intValue();
     }
 
     private static List<String> stringList(
@@ -329,7 +385,7 @@ public final class Campaign {
         }
         try {
             Json j = new Json().obj();
-            j.put("schema", 1);
+            j.put("schema", CURRENT_SCHEMA);
             j.arrKey("canon");
             for (String c : CANON) j.val(c);
             j.endArr();
@@ -337,6 +393,9 @@ public final class Campaign {
             j.put("scenario", SCENARIO);
             j.put("premise", PREMISE);
             j.put("lastState", LAST_STATE);
+            j.put("observedState", OBSERVED_STATE);
+            EVENTS.write(j);
+            MEMORY.write(j);
             j.arrKey("todo");
             for (String t : TODO) j.val(t);
             j.endArr();
@@ -370,6 +429,8 @@ public final class Campaign {
             Path target = root().resolve("campaign.json");
             AtomicFiles.writeUtf8(target, j.toString(),
                     target.resolveSibling("campaign.json.bak"), MAX_CAMPAIGN_BYTES);
+            eventDirty = false;
+            nextEventCheckpointNanos = System.nanoTime() + EVENT_CHECKPOINT_NANOS;
             return true;
         } catch (Throwable t) {
             Config.log("campaign: SAVE FAILED - " + t);
@@ -459,6 +520,8 @@ public final class Campaign {
     private static String SCENARIO = "";
     private static String PREMISE = "";
     private static String LAST_STATE = "";
+    /** Most recent local observation, independent of when a page was written. */
+    private static String OBSERVED_STATE = "";
 
     /**
      * The to-do list.
@@ -632,9 +695,137 @@ public final class Campaign {
         sb.append("Rooms the survivor has already walked through. They may ");
         sb.append("remember these; ");
         sb.append("anywhere not listed they have never laid eyes on.\n\n");
-        for (String s : SEEN) sb.append("- ").append(s).append('\n');
+        // The suffix is a LOCAL building id used to distinguish same-named
+        // rooms. Older builds rendered it directly into the provider prompt.
+        // Grouping preserves the important meaning without exporting an
+        // engine identifier.
+        LinkedHashMap<String, Integer> labels = new LinkedHashMap<>();
+        for (String seen : SEEN) labels.merge(seenLabel(seen), 1, Integer::sum);
+        for (Map.Entry<String, Integer> entry : labels.entrySet()) {
+            sb.append("- ").append(entry.getKey());
+            if (entry.getValue() > 1) {
+                sb.append(" — more than one different room has this name");
+            }
+            sb.append('\n');
+        }
         sb.append('\n');
         return sb.toString();
+    }
+
+    private static String seenLabel(String stored) {
+        int open = stored.lastIndexOf(" (");
+        if (open < 0 || !stored.endsWith(")")) return stored;
+        String suffix = stored.substring(open + 2, stored.length() - 1);
+        return suffix.matches("-?[0-9]+") ? stored.substring(0, open) : stored;
+    }
+
+    // ----------------------------------------------------------- 2.0 events
+
+    /**
+     * Observes a local snapshot and atomically checkpoints every event derived
+     * from the interval plus the structured place memory.
+     *
+     * This method never sends anything over the network. Raw engine ids and
+     * coordinates remain inside the save and are stripped from prompt output
+     * by StoryEvent and WorldMemory projections.
+     */
+    public static synchronized boolean observeState(String state, String stamp) {
+        return observeState(state, stamp, true);
+    }
+
+    /**
+     * @param forceSave true before a provider request; false for background
+     *                  samples, which batch low-value disk checkpoints.
+     */
+    public static synchronized boolean observeState(
+            String state, String stamp, boolean forceSave) {
+        load();
+        String kept = Delta.keep(state);
+        if (kept == null || kept.length() > MAX_LAST_STATE_CHARS) return false;
+
+        String oldObserved = OBSERVED_STATE;
+        EventJournal.Snapshot oldEvents = EVENTS.snapshot();
+        WorldMemory.Snapshot oldMemory = MEMORY.snapshot();
+        boolean oldDirty = eventDirty;
+        long oldNextCheckpoint = nextEventCheckpointNanos;
+        try {
+            List<StoryEvent.Draft> detected = OBSERVED_STATE.isEmpty()
+                    ? List.of()
+                    : EventDetector.between(OBSERVED_STATE, kept, stamp);
+            boolean memoryChanged = MEMORY.observe(kept, stamp);
+            for (StoryEvent.Draft event : detected) EVENTS.record(event);
+            boolean firstObservation = OBSERVED_STATE.isEmpty();
+            OBSERVED_STATE = kept;
+            boolean materialChange = firstObservation || !detected.isEmpty() || memoryChanged;
+            if (materialChange) eventDirty = true;
+
+            // A no-news sample updates the in-memory baseline. Low-value events
+            // are batched so a long archive is not rewritten once per room at
+            // five-second cadence. Decisive events are durable immediately,
+            // and requestStoryPage always force-flushes before network work.
+            boolean decisive = false;
+            for (StoryEvent.Draft event : detected) {
+                if (event.importance >= 75) { decisive = true; break; }
+            }
+            long now = System.nanoTime();
+            boolean checkpointDue = eventDirty
+                    && (nextEventCheckpointNanos == 0 || now >= nextEventCheckpointNanos);
+            if (!forceSave && !decisive && !checkpointDue) return true;
+            // A quiet sample still has to flush an earlier batched event once
+            // its checkpoint comes due. Testing only materialChange here left
+            // low-value events in memory forever until the next page request.
+            if (!eventDirty) return true;
+            if (save()) return true;
+        } catch (Throwable t) {
+            Config.log("campaign: event observation rejected - " + t);
+        }
+
+        OBSERVED_STATE = oldObserved;
+        EVENTS.restore(oldEvents);
+        MEMORY.restore(oldMemory);
+        eventDirty = oldDirty;
+        nextEventCheckpointNanos = oldNextCheckpoint;
+        return false;
+    }
+
+    /** Records a validated game/mod hook event under the campaign transaction. */
+    public static synchronized boolean recordEvent(
+            String type, String summary, int importance,
+            String stamp, String placeId, String place, String source) {
+        load();
+        EventJournal.Snapshot old = EVENTS.snapshot();
+        try {
+            EVENTS.record(StoryEvent.draft(type, stamp, placeId, place,
+                    summary, source, importance));
+            if (save()) return true;
+        } catch (Throwable t) {
+            Config.log("campaign: event rejected - " + t);
+        }
+        EVENTS.restore(old);
+        return false;
+    }
+
+    /** Exact pending batch captured for one provider request. */
+    static synchronized EventJournal.Capture promptEvents() {
+        load();
+        return EVENTS.capture();
+    }
+
+    public static synchronized int pendingEventCount() {
+        load();
+        return EVENTS.pendingCount();
+    }
+
+    /** Local diagnostics. Includes local ids and must not be sent to providers. */
+    public static synchronized String eventsJson() {
+        load();
+        return EVENTS.json();
+    }
+
+    /** Local diagnostics. Includes local place ids and must stay on the device. */
+    public static synchronized String worldMemoryJson() {
+        load();
+        return MEMORY.json();
     }
 
     // ------------------------------------------------------------- to-do
@@ -736,6 +927,22 @@ public final class Campaign {
             String todo,
             String state,
             int consumedDirections) {
+        return commitGeneratedPage(expectedGeneration, premise, title, text,
+                stamp, canon, todo, state, consumedDirections, List.of());
+    }
+
+    /** 2.0 overload: page commit also acknowledges its exact event batch. */
+    public static synchronized boolean commitGeneratedPage(
+            long expectedGeneration,
+            String premise,
+            String title,
+            String text,
+            String stamp,
+            List<String> canon,
+            String todo,
+            String state,
+            int consumedDirections,
+            List<Long> consumedEventIds) {
         if (GENERATION.get() != expectedGeneration) {
             Config.log("campaign: dropping completed page for stale generation "
                     + expectedGeneration + " (current " + GENERATION.get() + ")");
@@ -757,6 +964,7 @@ public final class Campaign {
         LinkedHashSet<String> oldCanon = new LinkedHashSet<>(CANON);
         List<String> oldTodo = new ArrayList<>(TODO);
         List<String> oldDirections = new ArrayList<>(DIRECTIONS);
+        EventJournal.Snapshot oldEvents = EVENTS.snapshot();
         String oldPremise = PREMISE;
         String oldLastState = LAST_STATE;
 
@@ -768,6 +976,18 @@ public final class Campaign {
         addTodoInMemory(todo, "story");
         int spent = Math.max(0, Math.min(consumedDirections, DIRECTIONS.size()));
         if (spent > 0) DIRECTIONS.subList(0, spent).clear();
+        int narratedEvents = EVENTS.markNarrated(consumedEventIds, PAGES.size());
+        if (consumedEventIds != null && narratedEvents != consumedEventIds.size()) {
+            PAGES.clear(); PAGES.addAll(oldPages);
+            CANON.clear(); CANON.addAll(oldCanon);
+            TODO.clear(); TODO.addAll(oldTodo);
+            DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
+            EVENTS.restore(oldEvents);
+            PREMISE = oldPremise;
+            LAST_STATE = oldLastState;
+            Config.log("campaign: page refused - captured event batch is stale");
+            return false;
+        }
         LAST_STATE = keptState;
         boolean stored = save();
 
@@ -776,6 +996,7 @@ public final class Campaign {
             CANON.clear(); CANON.addAll(oldCanon);
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
+            EVENTS.restore(oldEvents);
             PREMISE = oldPremise;
             LAST_STATE = oldLastState;
             Config.log("campaign: generated page rolled back after save failure");
@@ -784,7 +1005,8 @@ public final class Campaign {
 
         Config.log("campaign: page " + PAGES.size() + " committed atomically ("
                 + text.length() + " chars, generation " + expectedGeneration
-                + ", " + spent + " direction(s) consumed)");
+                + ", " + spent + " direction(s), " + narratedEvents
+                + " event(s) consumed)");
         return true;
     }
 
@@ -1104,6 +1326,7 @@ public final class Campaign {
     public static synchronized String history(int charBudget) {
         load();
         if (PAGES.isEmpty() && CANON.isEmpty() && SEEN.isEmpty()
+                && MEMORY.size() == 0
                 && OPENING.isEmpty() && SCENARIO.isEmpty() && PREMISE.isEmpty()) return "";
 
         // The scenario spine, the premise and the opening are NOT repeated
@@ -1113,6 +1336,7 @@ public final class Campaign {
         // the loudest possible way to make the model doubt the one it was
         // given. This block is the part of the campaign that GROWS.
         StringBuilder sb = new StringBuilder(8192);
+        if (Settings.knowledge() >= Settings.KNOW_MEMORY) sb.append(MEMORY.prompt());
         sb.append(seenForPrompt());
         if (!CANON.isEmpty()) {
             sb.append("### CANON SO FAR\n");

@@ -19,11 +19,15 @@ import me.zed_0xff.zombie_buddy.Exposer;
 @Exposer.LuaClass(name = "PZStory")
 public class StoryAPI {
 
+    /** Lightweight local observation cadence. It never starts a provider call. */
+    private static final long OBSERVE_INTERVAL_NANOS = 5_000_000_000L;
+    private static volatile long nextObservationNanos = 0;
+
     public StoryAPI() {
         // Kahlua wants a public no-arg constructor.
     }
 
-    /** Human-facing release, e.g. "1.25.0-rc1". For display and bug reports. */
+    /** Human-facing release, e.g. "2.0.0-alpha.1". For display and bug reports. */
     public static String version() {
         return Version.RELEASE;
     }
@@ -70,6 +74,36 @@ public class StoryAPI {
         } catch (Throwable t) {
             return "{\"error\":\"provider preview failed\"}";
         }
+    }
+
+    /**
+     * Called from the main-thread Lua tick. The fast path is only a clock
+     * comparison; every five seconds it records a lightweight factual state.
+     */
+    public static void observeWorld() {
+        long now = System.nanoTime();
+        long next = nextObservationNanos;
+        if (next != 0 && now < next) return;
+        nextObservationNanos = now + OBSERVE_INTERVAL_NANOS;
+        try {
+            Campaign.observeState(StateReader.eventSnapshot(), stamp(), false);
+        } catch (Throwable t) {
+            Config.log("event observer skipped a sample: " + t.getClass().getSimpleName());
+        }
+    }
+
+    /** Local-only diagnostics; includes event ids and must not be sent remotely. */
+    public static String eventJournal() {
+        return Campaign.eventsJson();
+    }
+
+    /** Local-only diagnostics; stable place ids never enter provider prompts. */
+    public static String worldMemory() {
+        return Campaign.worldMemoryJson();
+    }
+
+    public static int pendingEvents() {
+        return Campaign.pendingEventCount();
     }
 
     /**
@@ -157,6 +191,14 @@ public class StoryAPI {
         } catch (Throwable t) {
             return "could not read the game state: " + t.getClass().getSimpleName();
         }
+        final String pageStamp = stamp();
+        // Keep the observer schema consistent regardless of the player's
+        // provider-knowledge dial. A full KNOW_CARRIED snapshot intentionally
+        // omits room structure; replacing the observer baseline with it would
+        // make the next shelter transition disappear.
+        if (!Campaign.observeState(StateReader.eventSnapshot(), pageStamp, true)) {
+            return "could not save the local event journal; no provider request was made";
+        }
         final String narrativeState;
         try {
             narrativeState = NarrativeState.fromRaw(state);
@@ -175,6 +217,7 @@ public class StoryAPI {
         // A direction filed while the provider is working belongs to the next
         // page and survives this one's commit.
         Campaign.PromptNotes capturedNotes = Campaign.promptNotes();
+        EventJournal.Capture capturedEvents = Campaign.promptEvents();
         String voice = Campaign.todoForPrompt() + capturedNotes.text;
 
         // A note the player has only just written gets its own heading. Folded
@@ -195,7 +238,8 @@ public class StoryAPI {
         // The interval, not the instant. Without this every page
         // re-describes the room because nothing in the snapshot says
         // what is new.
-        String change = Delta.between(Campaign.lastState(), state);
+        String change = capturedEvents.text
+                + Delta.between(Campaign.lastState(), state);
 
         String systemPrompt = Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
                 + World.RULES + "\n\n" + World.KNOX
@@ -221,7 +265,6 @@ public class StoryAPI {
                 inputLimit - systemPrompt.length() - tailPrompt.length());
         String history = historyBudget == 0 ? "" : Campaign.history(historyBudget);
 
-        final String stamp = stamp();
         final String stateNow = state;
         String err = Llm.start(
                 systemPrompt,
@@ -247,11 +290,12 @@ public class StoryAPI {
                             result.premise,
                             result.title,
                             result.page,
-                            stamp,
+                            pageStamp,
                             result.canon,
                             result.todo,
                             stateNow,
-                            capturedNotes.directionCount);
+                            capturedNotes.directionCount,
+                            capturedEvents.ids);
                     return stored ? null : Llm.CompletionResult.failure("save",
                             "the page was valid but the campaign file could not be saved; "
                                     + "the old campaign is unchanged");
@@ -460,6 +504,7 @@ public class StoryAPI {
         Llm.invalidateForSaveChange();
         Campaign.reset();
         Campaign.load();
+        nextObservationNanos = 0;
     }
 
     /**

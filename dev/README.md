@@ -5,16 +5,20 @@ working on the mod.
 
 ## `PZStory_Probe.lua`
 
-Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get two keys:
+Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get four keys:
 
 - **F9** — dump the minimised, provider-facing live-state block to
   `console.txt`. This is the fastest way to answer "what did the narrator
   actually see?" without logging exact coordinates, account names or raw
   diagnostics. It still contains private story facts; review it before sharing.
 - **F10** — self-test the Java bridge and print the loaded JAR version.
+- **F11** — dump the 2.0 local event journal. This contains stable local ids;
+  it is never provider input and should be treated as private.
+- **F12** — dump structured place memory, including the local identities used
+  to distinguish same-named rooms.
 
-Left out of the shipped mod because a player does not need two debug keybinds,
-and F9/F10 collide with other mods.
+Left out of the shipped mod because a player does not need four debug keybinds,
+and F9-F12 collide with other mods.
 
 ## `context-audit.html`
 

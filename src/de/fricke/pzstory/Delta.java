@@ -575,7 +575,8 @@ public final class Delta {
             Map<String, Object> keep = new LinkedHashMap<>();
             for (String k : new String[]{"time", "position", "skills", "health",
                                          "character", "stowedOnHim", "wearing", "bags", "inHisHands",
-                                         "theDead", "utilities", "here", "noise", "inAVehicle"}) {
+                                         "theDead", "utilities", "here", "noise", "inAVehicle",
+                                         "weather", "doing"}) {
                 if (m.containsKey(k)) keep.put(k, m.get(k));
             }
             return Json.of(keep);

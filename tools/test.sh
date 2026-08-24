@@ -7,9 +7,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if [ -z "${JDK:-}" ]; then
-    command -v javac >/dev/null 2>&1 || { echo "No javac on PATH" >&2; exit 1; }
-    JDK="$(cd "$(dirname "$(command -v javac)")" && pwd)"
+JAVA_MODULES=""
+if command -v java >/dev/null 2>&1; then
+    JAVA_MODULES="$(java --list-modules 2>/dev/null || true)"
+fi
+
+if [ -n "${JDK:-}" ]; then
+    JAVAC=("$JDK/javac")
+    JAVA_BIN="$JDK/java"
+elif command -v javac >/dev/null 2>&1; then
+    JAVAC=("$(command -v javac)")
+    JAVA_BIN="$(command -v java)"
+elif command -v java >/dev/null 2>&1 \
+        && [[ "$JAVA_MODULES" == *"jdk.compiler@"* ]]; then
+    # Some minimal JDK images ship the compiler module but omit the javac
+    # launcher. The launcher is only a thin wrapper around this main class.
+    JAVAC=(java -m jdk.compiler/com.sun.tools.javac.Main)
+    JAVA_BIN="$(command -v java)"
+else
+    echo "No Java compiler available" >&2
+    exit 1
 fi
 
 # Pure-Java units only. Anything touching zombie.* belongs in the in-game
@@ -19,17 +36,22 @@ src/de/fricke/pzstory/BoundedFiles.java \
 src/de/fricke/pzstory/Campaign.java \
 src/de/fricke/pzstory/Config.java \
 src/de/fricke/pzstory/Delta.java \
+src/de/fricke/pzstory/EventDetector.java \
+src/de/fricke/pzstory/EventJournal.java \
 src/de/fricke/pzstory/Endpoint.java \
 src/de/fricke/pzstory/Json.java \
 src/de/fricke/pzstory/JsonParse.java \
 src/de/fricke/pzstory/Llm.java \
 src/de/fricke/pzstory/NarrativeState.java \
 src/de/fricke/pzstory/PageResult.java \
+src/de/fricke/pzstory/PlaceRef.java \
 src/de/fricke/pzstory/Scenario.java \
+src/de/fricke/pzstory/StoryEvent.java \
 src/de/fricke/pzstory/Settings.java \
-src/de/fricke/pzstory/Version.java"
+src/de/fricke/pzstory/Version.java \
+src/de/fricke/pzstory/WorldMemory.java"
 
 rm -rf build/test && mkdir -p build/test
-"$JDK/javac" -encoding UTF-8 -Xlint:all -d build/test $UNITS \
+"${JAVAC[@]}" -encoding UTF-8 -Xlint:all -d build/test $UNITS \
     test/zombie/ZomboidFileSystem.java test/de/fricke/pzstory/*.java
-"$JDK/java" -cp build/test de.fricke.pzstory.AllTests
+"$JAVA_BIN" -cp build/test de.fricke.pzstory.AllTests

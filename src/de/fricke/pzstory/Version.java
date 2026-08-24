@@ -33,7 +33,7 @@ public final class Version {
      * Human-facing release. Bump for any shipped change.
      * MUST equal modversion in mod/42/mod.info.
      */
-    public static final String RELEASE = "1.25.0-rc1";
+    public static final String RELEASE = "2.0.0-alpha.1";
 
     /**
      * Lua/Java bridge compatibility. Bump when production Lua depends on a
@@ -47,6 +47,8 @@ public final class Version {
      *      and normalised stream metric field names
      *   4  release 1.25.0-rc1 - transactional completion states, STOP handling,
      *      and providerPreview()
+     *   5  release 2.0.0-alpha.1 - local event observer, transactional event
+     *      consumption, and structured world-memory diagnostics
      */
-    public static final String API = "4";
+    public static final String API = "5";
 }

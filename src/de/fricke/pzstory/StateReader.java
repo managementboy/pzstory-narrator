@@ -94,6 +94,43 @@ public final class StateReader {
         return j.endObj().toString();
     }
 
+    /**
+     * Smaller local-only sample for the 2.0 event journal.
+     *
+     * The five-second observer does not walk inventory, container contents or
+     * the full descriptive room census. It keeps compact fingerprints of only
+     * durable transitions worth catching between WRITE presses. A full
+     * snapshot still runs for every page.
+     */
+    public static String eventSnapshot() {
+        lastErrors.clear();
+        Json j = new Json().obj();
+        j.put("schema", 1);
+        j.put("modVersion", Main.VERSION);
+
+        IsoPlayer p = null;
+        try { p = IsoPlayer.getInstance(); }
+        catch (Throwable t) { note("getInstance", t); }
+        if (p == null) {
+            j.put("error", "no player - main menu, or called before the world loaded");
+            errors(j);
+            return j.endObj().toString();
+        }
+
+        gameTime(j);
+        eventCharacter(j, p);
+        position(j, p);
+        doingAndWeather(j, p);
+        noise(j, p);
+        utilities(j, p);
+        eventThreat(j, p);
+        eventShelter(j, p);
+        health(j, p);
+        skills(j, p);
+        errors(j);
+        return j.endObj().toString();
+    }
+
     // ---------------------------------------------------------------- time
 
     private static void gameTime(Json j) {
@@ -125,6 +162,21 @@ public final class StateReader {
     }
 
     // ----------------------------------------------------------- character
+
+    /** Progress fields needed by the observer without trait/biography walks. */
+    private static void eventCharacter(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
+        try {
+            j.objKey("character");
+            j.put("hoursSurvived", p.getHoursSurvived());
+            j.put("zombieKills", p.getZombieKills());
+            j.put("asleep", p.isAsleep());
+            j.endObj();
+        } catch (Throwable t) {
+            j.rollback(checkpoint);
+            note("eventCharacter", t);
+        }
+    }
 
     private static void character(Json j, IsoPlayer p) {
         Json.Checkpoint checkpoint = j.checkpoint();
@@ -1219,6 +1271,28 @@ public final class StateReader {
         }
     }
 
+    /** Observer fast path: pursuit only, without visibility or corpse walks. */
+    private static void eventThreat(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
+        try {
+            var cell = zombie.iso.IsoWorld.instance == null
+                    ? null : zombie.iso.IsoWorld.instance.getCell();
+            if (cell == null || cell.getZombieList() == null) return;
+            var zombies = cell.getZombieList();
+            for (int i = 0; i < zombies.size(); i++) {
+                var zombie = zombies.get(i);
+                if (zombie == null || zombie.getTarget() != p) continue;
+                j.objKey("theDead");
+                j.put("comingForThem", "one or more");
+                j.endObj();
+                return;
+            }
+        } catch (Throwable t) {
+            j.rollback(checkpoint);
+            note("eventThreat", t);
+        }
+    }
+
     /** How big a room FEELS. Never a number - see the caller. */
     private static String roomWord(int squares) {
         if (squares <= 9)  return "cramped";
@@ -1440,6 +1514,80 @@ public final class StateReader {
         } catch (Throwable t) {
             j.rollback(checkpoint);
             note("surroundings", t);
+        }
+    }
+
+    /**
+     * Observer-only room fingerprint. It deliberately ignores furniture,
+     * floor inventory and bodies, retaining just deliberate shelter changes.
+     */
+    private static void eventShelter(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
+        try {
+            IsoGridSquare current = p.getCurrentSquare();
+            if (current == null || current.getRoom() == null) return;
+            var squares = current.getRoom().getSquares();
+            if (squares == null) return;
+
+            int winTotal = 0, winSmashed = 0, winBarricaded = 0;
+            int winOpen = 0, winCurtained = 0, winDrawn = 0;
+            int doorTotal = 0, doorOpen = 0, doorLocked = 0, doorBarricaded = 0;
+            int limit = Math.min(squares.size(), 600);
+            for (int i = 0; i < limit; i++) {
+                IsoGridSquare square = squares.get(i);
+                if (square == null || !visibleToPlayer(square, p)) continue;
+                try {
+                    var objects = square.getObjects();
+                    if (objects == null) continue;
+                    for (int k = 0; k < objects.size(); k++) {
+                        var object = objects.get(k);
+                        if (object instanceof zombie.iso.objects.IsoWindow win) {
+                            winTotal++;
+                            if (win.isSmashed() || win.isDestroyed()) winSmashed++;
+                            if (win.isBarricaded()) winBarricaded++;
+                            if (win.IsOpen()) winOpen++;
+                            try {
+                                var curtain = win.HasCurtains();
+                                if (curtain != null) {
+                                    winCurtained++;
+                                    if (!curtain.isCurtainOpen()) winDrawn++;
+                                }
+                            } catch (Throwable ignored) { }
+                        } else if (object instanceof zombie.iso.objects.IsoDoor door) {
+                            doorTotal++;
+                            if (door.IsOpen()) doorOpen++;
+                            if (door.isLocked()) doorLocked++;
+                            if (door.isBarricaded()) doorBarricaded++;
+                        }
+                    }
+                } catch (Throwable ignored) { }
+            }
+
+            j.objKey("here");
+            if (winTotal > 0) {
+                j.objKey("windows");
+                j.put("total", winTotal);
+                if (winSmashed > 0) j.put("smashed", winSmashed);
+                if (winBarricaded > 0) j.put("barricaded", winBarricaded);
+                if (winOpen > 0) j.put("open", winOpen);
+                if (winCurtained > 0) {
+                    j.put("withCurtains", winCurtained);
+                    j.put("curtainsDrawn", winDrawn);
+                }
+                j.endObj();
+            }
+            if (doorTotal > 0) {
+                j.objKey("doors");
+                j.put("total", doorTotal);
+                if (doorOpen > 0) j.put("open", doorOpen);
+                if (doorLocked > 0) j.put("locked", doorLocked);
+                if (doorBarricaded > 0) j.put("barricaded", doorBarricaded);
+                j.endObj();
+            }
+            j.endObj();
+        } catch (Throwable t) {
+            j.rollback(checkpoint);
+            note("eventShelter", t);
         }
     }
 
