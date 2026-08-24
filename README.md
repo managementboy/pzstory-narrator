@@ -75,7 +75,7 @@ remain local; providers receive only human-readable labels and qualitative
 familiarity. Existing schema-1 campaigns migrate on their next successful
 write.
 
-This is `2.0.0-alpha.5`, the automated-testing milestone—not the completed 2.0
+This is `2.0.0-alpha.6`, the automated-testing milestone—not the completed 2.0
 feature set. Campaign Director mode, grounded objectives, character memory,
 the PDA timeline and opt-in world artifacts are tracked in
 [`docs/V2_ROADMAP.md`](docs/V2_ROADMAP.md). Use a copied save and follow
@@ -162,7 +162,7 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`2.0.0-alpha.5`) is for people and changes whenever anything ships. **Bridge
+(`2.0.0-alpha.6`) is for people and changes whenever anything ships. **Bridge
 API** (`5`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer

@@ -62,6 +62,8 @@ public final class BridgeContractTest {
                 api.contains("stored ? null : Llm.CompletionResult.failure"));
         T.ok("privacy preview is exposed",
                 api.contains("String providerPreview()"));
+        T.ok("non-destructive Test Lab scenarios are exposed",
+                api.contains("String testLabScenario(String scenario)"));
         T.ok("typed fact diagnostics are local and explicit",
                 api.contains("String factMemory()")
                         && probe.contains("decodeDiagnostic(\"factMemory\")"));

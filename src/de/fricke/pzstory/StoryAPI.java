@@ -124,6 +124,11 @@ public class StoryAPI {
         return Campaign.eventsJson();
     }
 
+    /** Runs synthetic gameplay transitions entirely in memory; never touches a save. */
+    public static String testLabScenario(String scenario) {
+        return TestLabDiagnostics.run(scenario);
+    }
+
     /** Local-only diagnostics; stable place ids never enter provider prompts. */
     public static String worldMemory() {
         return Campaign.worldMemoryJson();

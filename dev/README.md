@@ -6,10 +6,12 @@ working on the mod.
 ## `PZStory_Probe.lua`
 
 When Project Zomboid is launched with `-debug`, **F4** opens the guided
-PZStory Test Lab and **F3** runs the selected suite. F4 cycles Quick Checks,
-Event Walkthrough and Continuity Walkthrough, then closes the lab. Quick
+PZStory Test Lab and **F3** runs the selected suite. The visible buttons run
+Quick Checks; isolated place, door, vehicle, noise, kill, time and continuity
+scenarios; or the real Event and Kill walkthroughs. Automated scenarios use
+in-memory fixtures and never change the save or contact a provider. Quick
 Checks validates the live bridge and all local diagnostic stores without a
-provider request. The walkthroughs watch the real event journal and advance
+provider request. The real walkthroughs watch the event journal and advance
 only after ordinary gameplay hooks fire. The continuity fixture equips one
 axe and spawns two nearby zombies; the player still performs both real kills.
 

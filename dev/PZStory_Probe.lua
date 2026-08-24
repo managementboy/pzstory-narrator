@@ -17,6 +17,9 @@
       grep -a 'PZStoryStream' console.txt
 ]]
 
+require "ISUI/ISPanel"
+require "ISUI/ISButton"
+
 local TAG = "[PZStoryProbe] "
 local OVERLAY_BIND  = "PZStory: testing mode overlay"
 local INBOX_BIND    = "PZStory: testing mode inbox view"
@@ -466,7 +469,8 @@ local lab = {
     deadline = 0,
 }
 
-local suites = { "QUICK CHECKS", "EVENT WALKTHROUGH", "CONTINUITY WALKTHROUGH" }
+local suites = { "QUICK CHECKS", "AUTOMATED SCENARIOS",
+    "EVENT WALKTHROUGH", "CONTINUITY WALKTHROUGH" }
 
 local function debugEnabled()
     local enabled = false
@@ -537,7 +541,8 @@ end
 local function runQuickChecks()
     lab.results = {}
     local methods = { "version", "apiVersion", "eventJournal", "worldMemory",
-        "factMemory", "threadMemory", "continuityMemory", "providerPreview" }
+        "factMemory", "threadMemory", "continuityMemory", "providerPreview",
+        "testLabScenario" }
     labResult("game debug mode", debugEnabled(), debugEnabled() and "enabled" or "launch with -debug")
     labResult("Java bridge", type(PZStory) == "table", type(PZStory))
     if type(PZStory) ~= "table" then return end
@@ -561,6 +566,34 @@ local function runQuickChecks()
     labResult("exact coordinates withheld", ok and not coordinateLeak)
     lab.title = "QUICK CHECKS COMPLETE"
     lab.instruction = "Review PASS/FAIL below. F3 repeats; F4 closes."
+end
+
+local function runSyntheticScenario(scenario)
+    lab.results = {}
+    if type(PZStory) ~= "table" or type(PZStory.testLabScenario) ~= "function" then
+        labResult("automated scenario bridge", false, "restart after installing the new JAR")
+        lab.title = "AUTOMATED SCENARIOS UNAVAILABLE"
+        return
+    end
+    local decoded
+    local ok, err = pcall(function()
+        decoded = PZStoryJSONDecode(PZStory.testLabScenario(scenario))
+    end)
+    if not ok or type(decoded) ~= "table" or type(decoded.checks) ~= "table" then
+        labResult("automated scenario response", false, err or "invalid JSON")
+        lab.title = "AUTOMATED SCENARIOS FAILED"
+        return
+    end
+    for _, check in ipairs(decoded.checks) do
+        if type(check) == "table" then
+            labResult(tostring(check.name or "scenario check"), check.pass == true,
+                tostring(check.detail or ""))
+        end
+    end
+    labResult("save unchanged", decoded.saveChanged == false, "in-memory fixture")
+    lab.title = "AUTOMATED " .. tostring(scenario):upper() .. " COMPLETE"
+    lab.instruction = tostring(decoded.passed or 0) .. "/"
+        .. tostring(decoded.total or 0) .. " scenario checks passed; no campaign data changed."
 end
 
 local function beginWalkthrough(continuity)
@@ -641,7 +674,8 @@ local function runLabSuite()
         return
     end
     if lab.suite == 1 then runQuickChecks()
-    elseif lab.suite == 2 then beginWalkthrough(false)
+    elseif lab.suite == 2 then runSyntheticScenario("all")
+    elseif lab.suite == 3 then beginWalkthrough(false)
     else beginWalkthrough(true) end
 end
 
@@ -674,7 +708,51 @@ local function toggleLab()
     end
 end
 
+local labPanel = nil
+
+local function labButtonClick(_, button)
+    local action = button and button.internal or ""
+    if action == "quick" then runQuickChecks()
+    elseif action == "events" then beginWalkthrough(false)
+    elseif action == "continuity-real" then beginWalkthrough(true)
+    elseif action == "close" then
+        lab.running = false
+        lab.visible = false
+    else runSyntheticScenario(action) end
+end
+
+local function ensureLabPanel()
+    if labPanel ~= nil then return end
+    local pl = getPlayer()
+    if pl == nil then return end
+    local left = getPlayerScreenLeft(pl:getPlayerNum()) + 18
+    local top = getPlayerScreenTop(pl:getPlayerNum()) + 210
+    labPanel = ISPanel:new(left, top, 760, 104)
+    labPanel:initialise()
+    labPanel.backgroundColor = { r = 0.03, g = 0.04, b = 0.05, a = 0.82 }
+    labPanel.borderColor = { r = 0.35, g = 0.9, b = 0.55, a = 0.9 }
+    labPanel:addToUIManager()
+    local specs = {
+        { "QUICK", "quick" }, { "ALL AUTO", "all" }, { "PLACE", "place" },
+        { "DOORS", "door" }, { "VEHICLE", "vehicle" }, { "NOISE", "noise" },
+        { "KILL", "kill" }, { "TIME", "time" }, { "MEMORY", "continuity" },
+        { "REAL EVENTS", "events" }, { "REAL KILLS", "continuity-real" },
+        { "CLOSE", "close" },
+    }
+    for i, spec in ipairs(specs) do
+        local col = (i - 1) % 6
+        local row = math.floor((i - 1) / 6)
+        local button = ISButton:new(8 + col * 125, 8 + row * 44, 117, 34,
+            spec[1], nil, labButtonClick)
+        button.internal = spec[2]
+        button:initialise()
+        labPanel:addChild(button)
+    end
+end
+
 local function drawLab()
+    ensureLabPanel()
+    if labPanel ~= nil then labPanel:setVisible(lab.visible and debugEnabled()) end
     if not lab.visible then return end
     local pl = getPlayer()
     if pl == nil then return end
@@ -702,6 +780,7 @@ end
 -- gating before any fixture can be prepared.
 PZStoryTestLabToggle = toggleLab
 PZStoryTestLabRun = runLabSuite
+PZStoryTestLabScenario = runSyntheticScenario
 
 -- ------------------------------------------------------------------ wiring
 

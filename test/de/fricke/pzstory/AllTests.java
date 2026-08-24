@@ -16,6 +16,7 @@ public final class AllTests {
         ContinuityMemoryTest.run();
         EventJournalTest.run();
         WorldMemoryTest.run();
+        TestLabDiagnosticsTest.run();
         CampaignEventTest.run();
         CampaignTest.run();
         FileSafetyTest.run();
