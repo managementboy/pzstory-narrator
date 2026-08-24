@@ -129,7 +129,9 @@ final class WorldMemory {
         sb.append("Only places the survivor has physically occupied are listed. "
                 + "Familiarity is memory, not proof that the place is unchanged. "
                 + "Do not restore old furniture or objects unless the live state "
-                + "shows them now.\n\n");
+                + "shows them now. When the current place is marked as a return, "
+                + "the game's stable identity confirms it is the SAME place as "
+                + "before, not a different room with the same name.\n\n");
         int emitted = 0;
         for (int i = recent.size() - 1; i >= 0 && emitted < MAX_PROMPT_PLACES; i--) {
             Place place = recent.get(i);
@@ -137,7 +139,9 @@ final class WorldMemory {
             if (place.id.equals(currentPlaceId)) {
                 sb.append(" — where they are now");
                 if (place.visits >= 5) sb.append(", deeply familiar");
-                else if (place.visits >= 2) sb.append(", somewhere they have returned to");
+                else if (place.visits >= 2) {
+                    sb.append(", confirmed as the same place they have returned to");
+                }
             } else if (place.visits >= 5) sb.append(" — deeply familiar");
             else if (place.visits >= 2) sb.append(" — somewhere they have returned to");
             else sb.append(" — visited once");

@@ -21,6 +21,9 @@ public final class WorldMemoryTest {
         String prompt = memory.prompt();
         T.ok("return is expressed qualitatively", prompt.contains("returned to"));
         T.ok("current place is identified", prompt.contains("where they are now"));
+        T.ok("stable return cannot be called a different same-named room",
+                prompt.contains("SAME place")
+                        && prompt.contains("confirmed as the same place"));
         T.ok("provider memory omits engine ids", !prompt.contains("room-secret"));
 
         Json json = new Json().obj();
