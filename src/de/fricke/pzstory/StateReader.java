@@ -122,6 +122,7 @@ public final class StateReader {
         gameTime(j);
         eventCharacter(j, p);
         eventInventory(j, p);
+        vehicle(j, p);
         position(j, p);
         doingAndWeather(j, p);
         noise(j, p);
@@ -174,6 +175,8 @@ public final class StateReader {
             j.put("hoursSurvived", p.getHoursSurvived());
             j.put("zombieKills", p.getZombieKills());
             j.put("asleep", p.isAsleep());
+            InventoryItem primary = p.getPrimaryHandItem();
+            if (primary != null) j.put("primaryHand", boundedLabel(displayName(primary)));
             j.endObj();
         } catch (Throwable t) {
             j.rollback(checkpoint);

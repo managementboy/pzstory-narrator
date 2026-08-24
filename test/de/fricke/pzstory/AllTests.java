@@ -10,6 +10,8 @@ public final class AllTests {
         PromptFreshStartTest.run();
         DeltaTest.run();
         ActionEventPolicyTest.run();
+        FactMemoryTest.run();
+        RepetitionGuardTest.run();
         EventJournalTest.run();
         WorldMemoryTest.run();
         CampaignEventTest.run();

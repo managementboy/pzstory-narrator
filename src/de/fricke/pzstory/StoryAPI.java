@@ -129,6 +129,11 @@ public class StoryAPI {
         return Campaign.worldMemoryJson();
     }
 
+    /** Local-only typed story facts, including provenance and confidence. */
+    public static String factMemory() {
+        return Campaign.factMemoryJson();
+    }
+
     public static int pendingEvents() {
         return Campaign.pendingEventCount();
     }
@@ -266,7 +271,8 @@ public class StoryAPI {
         // re-describes the room because nothing in the snapshot says
         // what is new.
         String change = capturedEvents.text
-                + Delta.between(Campaign.lastState(), state);
+                + Delta.between(Campaign.lastState(), state)
+                + Campaign.repetitionGuidance();
 
         String systemPrompt = Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
                 + World.RULES + "\n\n" + World.KNOX

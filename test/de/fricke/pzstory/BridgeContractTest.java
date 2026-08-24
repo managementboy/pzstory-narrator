@@ -62,6 +62,9 @@ public final class BridgeContractTest {
                 api.contains("stored ? null : Llm.CompletionResult.failure"));
         T.ok("privacy preview is exposed",
                 api.contains("String providerPreview()"));
+        T.ok("typed fact diagnostics are local and explicit",
+                api.contains("String factMemory()")
+                        && probe.contains("decodeDiagnostic(\"factMemory\")"));
         T.ok("local observer is exposed",
                 api.contains("void observeWorld()")
                         && lua.contains("api(\"observeWorld\")"));
@@ -69,6 +72,11 @@ public final class BridgeContractTest {
                 api.contains("StateReader.eventSnapshot()")
                         && !method(api, "public static void observeWorld()")
                                 .contains("Llm.start"));
+        T.ok("event snapshot includes held item and vehicle occupancy",
+                read("src/de/fricke/pzstory/StateReader.java")
+                        .contains("j.put(\"primaryHand\"")
+                        && read("src/de/fricke/pzstory/StateReader.java")
+                                .contains("eventInventory(j, p);\n        vehicle(j, p);"));
         T.ok("supported transient callbacks force a factual sample",
                 api.contains("void observeNow()")
                         && lua.contains("Events.OnZombieDead")
@@ -126,11 +134,13 @@ public final class BridgeContractTest {
         T.ok("place visit count and pending events are visible",
                 probe.contains("VISIT \" .. visits")
                         && probe.contains("PENDING INBOX"));
-        T.ok("F5 switches the inbox to narrated history",
+        T.ok("F5 cycles inbox, narrated history and story facts",
                 probe.contains("Keyboard.KEY_F5")
                         && probe.contains("switchInbox()")
                         && probe.contains("RECENT HISTORY")
-                        && probe.contains("PAGE \" .. event.narrated"));
+                        && probe.contains("PAGE \" .. event.narrated")
+                        && probe.contains("STORY FACTS")
+                        && probe.contains("decodeDiagnostic(\"factMemory\")"));
         T.ok("inbox presents bounded factual summaries",
                 probe.contains("event.summary")
                         && probe.contains("if #overlay.events >= 6 then break end")

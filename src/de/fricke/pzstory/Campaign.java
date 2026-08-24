@@ -25,7 +25,7 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
-    private static final int CURRENT_SCHEMA = 2;
+    private static final int CURRENT_SCHEMA = 3;
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
@@ -68,6 +68,8 @@ public final class Campaign {
     private static Path root;
     private static final List<Page> PAGES = new ArrayList<>();
     private static final LinkedHashSet<String> CANON = new LinkedHashSet<>();
+    /** Schema-3 authority; CANON remains a compatibility projection. */
+    private static final FactMemory FACTS = new FactMemory();
     private static final EventJournal EVENTS = new EventJournal();
     private static final WorldMemory MEMORY = new WorldMemory();
 
@@ -136,6 +138,7 @@ public final class Campaign {
         root = null;
         PAGES.clear();
         CANON.clear();
+        FACTS.clear();
         DIRECTIONS.clear();
         STANDING.clear();
         SEEN.clear();
@@ -176,6 +179,20 @@ public final class Campaign {
 
             LinkedHashSet<String> nextCanon = new LinkedHashSet<>(
                     stringList(m.get("canon"), "canon", 10000, 300));
+            FactMemory nextFacts = new FactMemory();
+            if (schema >= 3) {
+                nextFacts.load(m.get("factMemory"));
+                nextCanon.clear();
+                nextCanon.addAll(nextFacts.activeText());
+            } else {
+                for (String legacy : nextCanon) {
+                    String playerPrefix = "(the player observes) ";
+                    boolean player = legacy.startsWith(playerPrefix);
+                    String text = player ? legacy.substring(playerPrefix.length()) : legacy;
+                    nextFacts.add(text, "knowledge", player ? "player" : "legacy",
+                            player ? 95 : 40, 0);
+                }
+            }
             String nextOpening = field(m, "opening", 32000);
             // Self-heal a campaign opened by 1.15.0/1.15.1, where the trait
             // list had become objects but the opening builder still called
@@ -243,6 +260,7 @@ public final class Campaign {
             // Publish only after every field and collection passed validation.
             PAGES.clear(); PAGES.addAll(nextPages);
             CANON.clear(); CANON.addAll(nextCanon);
+            FACTS.restore(nextFacts.snapshot());
             DIRECTIONS.clear(); DIRECTIONS.addAll(nextDirections);
             STANDING.clear(); STANDING.addAll(nextStanding);
             SEEN.clear(); SEEN.addAll(nextSeen);
@@ -308,6 +326,7 @@ public final class Campaign {
     private static void clearLoadedData() {
         PAGES.clear();
         CANON.clear();
+        FACTS.clear();
         DIRECTIONS.clear();
         STANDING.clear();
         SEEN.clear();
@@ -387,8 +406,9 @@ public final class Campaign {
             Json j = new Json().obj();
             j.put("schema", CURRENT_SCHEMA);
             j.arrKey("canon");
-            for (String c : CANON) j.val(c);
+            for (String c : FACTS.activeText()) j.val(c);
             j.endArr();
+            FACTS.write(j);
             j.put("opening", OPENING);
             j.put("scenario", SCENARIO);
             j.put("premise", PREMISE);
@@ -485,8 +505,10 @@ public final class Campaign {
         if (entries == null || entries.isEmpty()) return;
         load();
         LinkedHashSet<String> old = new LinkedHashSet<>(CANON);
+        FactMemory.Snapshot oldFacts = FACTS.snapshot();
         if (addCanonInMemory(entries) && !save()) {
             CANON.clear(); CANON.addAll(old);
+            FACTS.restore(oldFacts);
         }
     }
 
@@ -504,6 +526,11 @@ public final class Campaign {
                     if (oldest.hasNext()) { oldest.next(); oldest.remove(); changed = true; }
                 }
                 changed |= CANON.add(s);
+                String prefix = "(the player observes) ";
+                boolean player = s.startsWith(prefix);
+                FACTS.add(player ? s.substring(prefix.length()) : s,
+                        "knowledge", player ? "player" : "narrator",
+                        player ? 95 : 55, PAGES.size());
             }
         }
         return changed;
@@ -511,7 +538,13 @@ public final class Campaign {
 
     public static synchronized List<String> canon() {
         load();
-        return new ArrayList<>(CANON);
+        return FACTS.activeText();
+    }
+
+    /** Local diagnostics for tomorrow's migration and contradiction testing. */
+    public static synchronized String factMemoryJson() {
+        load();
+        return FACTS.json();
     }
 
     // ----------------------------------------------------------- opening
@@ -746,6 +779,7 @@ public final class Campaign {
         String oldObserved = OBSERVED_STATE;
         EventJournal.Snapshot oldEvents = EVENTS.snapshot();
         WorldMemory.Snapshot oldMemory = MEMORY.snapshot();
+        FactMemory.Snapshot oldFacts = FACTS.snapshot();
         boolean oldDirty = eventDirty;
         long oldNextCheckpoint = nextEventCheckpointNanos;
         try {
@@ -754,9 +788,11 @@ public final class Campaign {
                     : EventDetector.between(OBSERVED_STATE, kept, stamp);
             boolean memoryChanged = MEMORY.observe(kept, stamp);
             for (StoryEvent.Draft event : detected) EVENTS.record(event);
+            boolean factsChanged = updateGameFacts(OBSERVED_STATE, kept);
             boolean firstObservation = OBSERVED_STATE.isEmpty();
             OBSERVED_STATE = kept;
-            boolean materialChange = firstObservation || !detected.isEmpty() || memoryChanged;
+            boolean materialChange = firstObservation || !detected.isEmpty()
+                    || memoryChanged || factsChanged;
             if (materialChange) eventDirty = true;
 
             // A no-news sample updates the in-memory baseline. Low-value events
@@ -783,9 +819,65 @@ public final class Campaign {
         OBSERVED_STATE = oldObserved;
         EVENTS.restore(oldEvents);
         MEMORY.restore(oldMemory);
+        FACTS.restore(oldFacts);
         eventDirty = oldDirty;
         nextEventCheckpointNanos = oldNextCheckpoint;
         return false;
+    }
+
+    /** Maintains a few current-state slots without inferring ownership or safety. */
+    private static boolean updateGameFacts(String beforeJson, String afterJson) {
+        Map<String, Object> before = beforeJson == null || beforeJson.isEmpty()
+                ? Map.of() : JsonParse.parseObject(beforeJson);
+        Map<String, Object> after = JsonParse.parseObject(afterJson);
+        boolean changed = false;
+
+        Map<String, Object> oldCharacter = JsonParse.map(before, "character");
+        Map<String, Object> character = JsonParse.map(after, "character");
+        String oldHand = oldCharacter == null ? ""
+                : JsonParse.str(oldCharacter, "primaryHand", "");
+        String hand = character == null ? "" : JsonParse.str(character, "primaryHand", "");
+        if (!hand.equals(oldHand)) {
+            String text = hand.isEmpty() ? "the survivor's primary hand is empty"
+                    : "the survivor currently holds " + hand + " in their primary hand";
+            changed |= FACTS.upsert("game:primary-hand", text, "possession",
+                    "game", 100, PAGES.size());
+        }
+
+        Map<String, Object> oldVehicle = JsonParse.map(before, "inAVehicle");
+        Map<String, Object> vehicle = JsonParse.map(after, "inAVehicle");
+        String oldModel = oldVehicle == null ? "" : JsonParse.str(oldVehicle, "model", "a vehicle");
+        String model = vehicle == null ? "" : JsonParse.str(vehicle, "model", "a vehicle");
+        if (!model.equals(oldModel)) {
+            String text = model.isEmpty() ? "the survivor is currently on foot"
+                    : "the survivor is currently inside " + article(model);
+            changed |= FACTS.upsert("game:vehicle-occupancy", text, "possession",
+                    "game", 100, PAGES.size());
+        }
+
+        Map<String, Object> oldHealth = JsonParse.map(before, "health");
+        Map<String, Object> health = JsonParse.map(after, "health");
+        for (String[] wound : new String[][] {
+                {"partsBitten", "bite wound"}, {"partsScratched", "scratch"},
+                {"partsBleeding", "bleeding wound"}
+        }) {
+            int oldCount = oldHealth == null ? 0 : JsonParse.num(oldHealth, wound[0], 0);
+            int count = health == null ? 0 : JsonParse.num(health, wound[0], 0);
+            if (count == oldCount) continue;
+            String text = count == 0 ? "the survivor currently has no active " + wound[1]
+                    : "the survivor currently has " + count + " active "
+                            + wound[1] + (count == 1 ? "" : "s");
+            changed |= FACTS.upsert("game:injury:" + wound[0], text, "injury",
+                    "game", 100, PAGES.size());
+        }
+        return changed;
+    }
+
+    private static String article(String label) {
+        if (label == null || label.isBlank()) return "a vehicle";
+        String lower = label.toLowerCase(java.util.Locale.ROOT);
+        return lower.startsWith("a ") || lower.startsWith("an ")
+                || lower.startsWith("the ") ? label : "a " + label;
     }
 
     /** Records a validated game/mod hook event under the campaign transaction. */
@@ -954,6 +1046,19 @@ public final class Campaign {
         if (premise != null && premise.length() > 4 * 1024) return false;
         if (PAGES.isEmpty() && PREMISE.isEmpty()
                 && (premise == null || premise.isBlank())) return false;
+        String titleKey = RepetitionGuard.titleKey(title);
+        String openingKey = RepetitionGuard.openingKey(text);
+        for (Page old : PAGES) {
+            if (!titleKey.isEmpty() && titleKey.equals(RepetitionGuard.titleKey(old.title))) {
+                Config.log("campaign: page refused - title repeats page " + old.number);
+                return false;
+            }
+            if (!openingKey.isEmpty()
+                    && openingKey.equals(RepetitionGuard.openingKey(old.text))) {
+                Config.log("campaign: page refused - opening repeats page " + old.number);
+                return false;
+            }
+        }
         String keptState = Delta.keep(state);
         if (keptState == null || keptState.length() > MAX_LAST_STATE_CHARS) return false;
 
@@ -962,6 +1067,7 @@ public final class Campaign {
         // same old campaign when persistence is unavailable.
         List<Page> oldPages = new ArrayList<>(PAGES);
         LinkedHashSet<String> oldCanon = new LinkedHashSet<>(CANON);
+        FactMemory.Snapshot oldFacts = FACTS.snapshot();
         List<String> oldTodo = new ArrayList<>(TODO);
         List<String> oldDirections = new ArrayList<>(DIRECTIONS);
         EventJournal.Snapshot oldEvents = EVENTS.snapshot();
@@ -980,6 +1086,7 @@ public final class Campaign {
         if (consumedEventIds != null && narratedEvents != consumedEventIds.size()) {
             PAGES.clear(); PAGES.addAll(oldPages);
             CANON.clear(); CANON.addAll(oldCanon);
+            FACTS.restore(oldFacts);
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
             EVENTS.restore(oldEvents);
@@ -994,6 +1101,7 @@ public final class Campaign {
         if (!stored) {
             PAGES.clear(); PAGES.addAll(oldPages);
             CANON.clear(); CANON.addAll(oldCanon);
+            FACTS.restore(oldFacts);
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
             EVENTS.restore(oldEvents);
@@ -1181,9 +1289,11 @@ public final class Campaign {
                     s = s.substring(0, 300 - prefix.length());
                 }
                 LinkedHashSet<String> old = new LinkedHashSet<>(CANON);
+                FactMemory.Snapshot oldFacts = FACTS.snapshot();
                 boolean added = addCanonInMemory(List.of(prefix + s));
                 if (added && !save()) {
                     CANON.clear(); CANON.addAll(old);
+                    FACTS.restore(oldFacts);
                     return "could not save that note";
                 }
                 return added ? "kept as canon" : "already kept as canon";
@@ -1325,7 +1435,7 @@ public final class Campaign {
      */
     public static synchronized String history(int charBudget) {
         load();
-        if (PAGES.isEmpty() && CANON.isEmpty() && SEEN.isEmpty()
+        if (PAGES.isEmpty() && FACTS.size() == 0 && SEEN.isEmpty()
                 && MEMORY.size() == 0
                 && OPENING.isEmpty() && SCENARIO.isEmpty() && PREMISE.isEmpty()) return "";
 
@@ -1338,12 +1448,7 @@ public final class Campaign {
         StringBuilder sb = new StringBuilder(8192);
         if (Settings.knowledge() >= Settings.KNOW_MEMORY) sb.append(MEMORY.prompt());
         sb.append(seenForPrompt());
-        if (!CANON.isEmpty()) {
-            sb.append("### CANON SO FAR\n");
-            sb.append("Established facts of this story. Stay consistent with them.\n\n");
-            for (String c : CANON) sb.append("- ").append(c).append('\n');
-            sb.append('\n');
-        }
+        sb.append(FACTS.prompt());
 
         int first = 0;
         if (charBudget > 0) {
@@ -1379,6 +1484,22 @@ public final class Campaign {
             return marker + out.substring(out.length() - (charBudget - marker.length()));
         }
         return out;
+    }
+
+    /** Small recent anti-repetition index placed beside the next-page request. */
+    public static synchronized String repetitionGuidance() {
+        load();
+        if (PAGES.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(1200);
+        out.append("### RECENT WORDING TO AVOID\n");
+        out.append("Do not reuse these titles or begin with these same words.\n");
+        int first = Math.max(0, PAGES.size() - 12);
+        for (int i = first; i < PAGES.size(); i++) {
+            Page page = PAGES.get(i);
+            out.append("- title: ").append(page.title).append(" | opening: ")
+                    .append(RepetitionGuard.openingKey(page.text)).append('\n');
+        }
+        return out.append('\n').toString();
     }
 
     /** Archive listing for the book's page selector. */

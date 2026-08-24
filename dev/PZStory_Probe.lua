@@ -2,7 +2,7 @@
   PZStory - Phase 2 harness.
 
   F8  - toggle the local Testing Mode overlay
-  F5  - switch its Event Inbox between pending and recent history
+  F5  - cycle Pending Inbox, Recent History and structured Story Facts
   F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
   F11 - dump the local event journal (contains local ids)
@@ -182,6 +182,7 @@ local overlay = {
     nextRefresh = 0,
     place = nil,
     events = {},
+    facts = {},
     pending = 0,
     error = nil,
     mode = "pending",
@@ -206,7 +207,8 @@ local function refreshOverlay()
 
     local memory = decodeDiagnostic("worldMemory")
     local journal = decodeDiagnostic("eventJournal")
-    if memory == nil or journal == nil then
+    local factRoot = decodeDiagnostic("factMemory")
+    if memory == nil or journal == nil or factRoot == nil then
         overlay.error = "diagnostics unavailable"
         return
     end
@@ -227,6 +229,7 @@ local function refreshOverlay()
 
     overlay.pending = tonumber(journal.pending) or 0
     overlay.events = {}
+    overlay.facts = {}
     if type(journal.events) == "table" then
         for i = #journal.events, 1, -1 do
             local event = journal.events[i]
@@ -241,6 +244,22 @@ local function refreshOverlay()
                     narrated = narrated,
                 })
                 if #overlay.events >= 6 then break end
+            end
+        end
+    end
+    local factMemory = factRoot.factMemory
+    if type(factMemory) == "table" and type(factMemory.facts) == "table" then
+        for i = #factMemory.facts, 1, -1 do
+            local fact = factMemory.facts[i]
+            if type(fact) == "table" then
+                table.insert(overlay.facts, {
+                    kind = tostring(fact.type or "knowledge"):upper(),
+                    source = tostring(fact.source or "unknown"):upper(),
+                    confidence = tonumber(fact.confidence) or 0,
+                    text = tostring(fact.text or ""),
+                    superseded = tonumber(fact.supersededBy or 0) > 0,
+                })
+                if #overlay.facts >= 6 then break end
             end
         end
     end
@@ -289,11 +308,29 @@ local function drawOverlay()
         shadowText(UIFont.Small, x, y, overlay.error, 1, 0.3, 0.3, false)
         return
     end
-    local view = overlay.mode == "recent" and "RECENT HISTORY" or "PENDING INBOX"
+    local view = overlay.mode == "recent" and "RECENT HISTORY"
+        or (overlay.mode == "facts" and "STORY FACTS" or "PENDING INBOX")
     shadowText(UIFont.Small, x, y, view .. "  |  PENDING: " .. overlay.pending,
         overlay.pending > 0 and 1 or 0.6, overlay.pending > 0 and 0.8 or 0.9, 0.35, false)
     y = y + 18
-    if #overlay.events == 0 then
+    if overlay.mode == "facts" then
+        if #overlay.facts == 0 then
+            shadowText(UIFont.Small, x, y, "(no story facts)", 0.7, 0.7, 0.7, false)
+        else
+            for _, fact in ipairs(overlay.facts) do
+                local r, g, b = fact.superseded and 0.55 or 0.45,
+                    fact.superseded and 0.55 or 0.9, fact.superseded and 0.55 or 1
+                local state = fact.superseded and "SUPERSEDED" or "ACTIVE"
+                shadowText(UIFont.Small, x, y, fact.kind .. "  " .. fact.source
+                    .. "  [" .. fact.confidence .. "]  " .. state, r, g, b, false)
+                y = y + 17
+                local text = fact.text:gsub("[\r\n]", " ")
+                if #text > 88 then text = text:sub(1, 85) .. "..." end
+                shadowText(UIFont.Small, x + 14, y, text, r, g, b, false)
+                y = y + 17
+            end
+        end
+    elseif #overlay.events == 0 then
         shadowText(UIFont.Small, x, y, "(no pending events)", 0.7, 0.7, 0.7, false)
     else
         for _, event in ipairs(overlay.events) do
@@ -313,7 +350,7 @@ local function drawOverlay()
         end
     end
     y = y + 4
-    shadowText(UIFont.Small, x, y, "F5: switch inbox/history  |  F8: close",
+    shadowText(UIFont.Small, x, y, "F5: inbox/history/facts  |  F8: close",
         0.65, 0.75, 0.8, false)
 end
 
@@ -326,7 +363,8 @@ end
 
 local function switchInbox()
     if not overlay.visible then overlay.visible = true end
-    overlay.mode = overlay.mode == "pending" and "recent" or "pending"
+    overlay.mode = overlay.mode == "pending" and "recent"
+        or (overlay.mode == "recent" and "facts" or "pending")
     overlay.nextRefresh = 0
     refreshOverlay()
     notify("PZStory Inbox: " .. overlay.mode:upper(), true)

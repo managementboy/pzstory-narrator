@@ -34,6 +34,9 @@ public final class CampaignEventTest {
                     !baselineDisk.equals(Files.readString(store, StandardCharsets.UTF_8)));
             T.ok("changed observation is durable",
                     Campaign.observeState(after(), "1993-07-11 09:05"));
+            T.ok("game wound enters typed fact memory",
+                    Campaign.factMemoryJson().contains("game:injury:partsBitten")
+                            && Campaign.factMemoryJson().contains("\"source\":\"game\""));
             T.ok("meaningful changes are pending", Campaign.pendingEventCount() >= 3);
             EventJournal.Capture captured = Campaign.promptEvents();
             int capturedCount = captured.ids.size();
@@ -53,7 +56,7 @@ public final class CampaignEventTest {
             T.ok("unknown captured event id rejects page",
                     !Campaign.commitGeneratedPage(
                             Campaign.generation(), "", "Stale Event Page",
-                            words("page", 60), "1993-07-11 09:08", List.of(), "",
+                            words("stale", 60), "1993-07-11 09:08", List.of(), "",
                             after(), 0, List.of(999_999L)));
             T.eq("stale event rejection rolls page back",
                     pagesBeforeStale, Campaign.pageCount());
@@ -62,7 +65,7 @@ public final class CampaignEventTest {
 
             Map<String, Object> disk = JsonParse.parseObject(
                     Files.readString(store, StandardCharsets.UTF_8));
-            T.eq("successful mutation upgrades store to schema 2", 2,
+            T.eq("successful mutation upgrades store to schema 3", 3,
                     JsonParse.num(disk, "schema", 0));
             T.ok("event journal is embedded in campaign transaction",
                     disk.get("eventJournal") instanceof Map<?, ?>);
@@ -102,6 +105,7 @@ public final class CampaignEventTest {
         }
 
         migration();
+        schema2Migration();
     }
 
     private static void migration() {
@@ -123,10 +127,48 @@ public final class CampaignEventTest {
             T.ok("first mutation after migration saves", Campaign.addTodo("migrated", "player"));
             Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
                     dir.resolve("campaign.json"), StandardCharsets.UTF_8));
-            T.eq("schema 1 saves forward as schema 2", 2,
+            T.eq("schema 1 saves forward as schema 3", 3,
                     JsonParse.num(upgraded, "schema", 0));
+            T.ok("legacy canon becomes typed fact memory",
+                    upgraded.get("factMemory") instanceof Map<?, ?>);
         } catch (Throwable t) {
             T.ok("schema migration fixture completed: " + t, false);
+        } finally {
+            Campaign.reset();
+            System.clearProperty("pzstory.test.root");
+            deleteTree(fixture);
+        }
+    }
+
+    private static void schema2Migration() {
+        T.group("Campaign 2.0 - schema 2 story-memory migration");
+        Path fixture = null;
+        try {
+            fixture = Files.createTempDirectory("pzstory-schema2-");
+            Path dir = fixture.resolve("pzstory");
+            Files.createDirectories(dir);
+            String old = "{\"schema\":2,\"canon\":["
+                    + "\"(the player observes) the garage is home\","
+                    + "\"the quiet feels unsafe\"],\"pages\":[]}";
+            Files.writeString(dir.resolve("campaign.json"), old,
+                    StandardCharsets.UTF_8);
+            System.setProperty("pzstory.test.root", fixture.toString());
+            Campaign.reset(); Campaign.load();
+            String facts = Campaign.factMemoryJson();
+            T.ok("schema 2 player observation keeps player provenance",
+                    facts.contains("\"source\":\"player\"")
+                            && facts.contains("the garage is home"));
+            T.ok("schema 2 narrator canon keeps legacy provenance",
+                    facts.contains("\"source\":\"legacy\"")
+                            && facts.contains("the quiet feels unsafe"));
+            T.ok("migration is saved on next mutation",
+                    Campaign.addTodo("checkpoint", "player"));
+            Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
+                    dir.resolve("campaign.json"), StandardCharsets.UTF_8));
+            T.eq("schema 2 saves forward as schema 3", 3,
+                    JsonParse.num(upgraded, "schema", 0));
+        } catch (Throwable t) {
+            T.ok("schema 2 migration fixture completed: " + t, false);
         } finally {
             Campaign.reset();
             System.clearProperty("pzstory.test.root");

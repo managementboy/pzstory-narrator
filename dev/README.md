@@ -8,7 +8,7 @@ working on the mod.
 Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get six keys:
 
 - **F8** — toggle the local Testing Mode overlay and pending Event Inbox.
-- **F5** — switch the inbox between pending events and recent narrated history.
+- **F5** — cycle pending events, recent narrated history and structured facts.
 
 - **F9** — dump the minimised, provider-facing live-state block to
   `console.txt`. This is the fastest way to answer "what did the narrator

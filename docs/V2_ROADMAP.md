@@ -26,19 +26,23 @@ Implemented:
 Remaining before this milestone is promoted from alpha:
 
 - Validate observer cost and event cadence inside a real Build 42 game.
-- Add direct engine hooks for fast transient events that polling can miss.
-- Extend detection to item use, crafting, repairs, farming and fires.
-- Add an in-device EVENT INBOX instead of requiring the development probe.
+- Promote the tested Event Inbox from Testing Mode into the normal device UI.
 
 ## Milestone 2 — Story memory
 
-- Replace flat canon with typed facts: world, biography, people, possessions,
+Implemented in `2.0.0-alpha.3`:
+
+- Schema-3 bounded typed facts for world, biography, people, possessions,
   injuries, knowledge, beliefs, promises and unresolved threads.
-- Preserve fact provenance: game, player, observed media or narrator
-  interpretation.
-- Add confidence and contradiction rules.
+- Provenance and confidence for game, player, media, narrator and migrated facts.
+- Conservative positive/negative contradiction supersession with source authority.
+- Lossless schema-1/schema-2 canon migration and atomic fact rollback.
+- Recent title/opening guidance plus exact repetition rejection.
+- Testing Mode Story Facts view with active/superseded status.
+
+Remaining:
+
 - Track weapons, vehicles, safehouses, injuries and routines across pages.
-- Add phrase/title/opening repetition detection.
 - Maintain deliberate setup/payoff records and prevent abandoned foreshadowing.
 
 ## Milestone 3 — Campaign Director

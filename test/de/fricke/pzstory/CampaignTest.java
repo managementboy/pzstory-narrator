@@ -46,6 +46,20 @@ public final class CampaignTest {
             T.eq("only captured direction is consumed",
                     List.of("late direction"), Campaign.directions());
             T.eq("canon committed with page", 1, Campaign.canon().size());
+            T.ok("typed canon is projected into structured prompt",
+                    Campaign.history(10000).contains("STRUCTURED STORY MEMORY"));
+            int beforeRepeat = Campaign.pageCount();
+            T.ok("repeated title is rejected before mutation",
+                    !Campaign.commitGeneratedPage(Campaign.generation(), "",
+                            "safe page", words("different", 60),
+                            "1993-07-10 09:30", List.of("must not remain"), "",
+                            "{\"position\":{\"x\":1,\"y\":2,\"z\":0}}", 0));
+            T.eq("title rejection keeps archive unchanged", beforeRepeat,
+                    Campaign.pageCount());
+            T.ok("title rejection keeps fact memory unchanged",
+                    !Campaign.canon().contains("must not remain"));
+            T.ok("recent wording guidance names prior title",
+                    Campaign.repetitionGuidance().contains("Safe Page"));
 
             Path store = fixture.resolve("pzstory/campaign.json");
             Path backup = fixture.resolve("pzstory/campaign.json.bak");
@@ -55,6 +69,7 @@ public final class CampaignTest {
             Path blockedTmp = store.resolveSibling("campaign.json.tmp");
             Files.createDirectories(blockedTmp);
             Files.writeString(blockedTmp.resolve("guard"), "x", StandardCharsets.UTF_8);
+            String factsBeforeFailure = Campaign.factMemoryJson();
             boolean failedCommit = Campaign.commitGeneratedPage(
                     Campaign.generation(), "", "Must Roll Back",
                     words("later", 60), "1993-07-10 10:00",
@@ -66,6 +81,8 @@ public final class CampaignTest {
                     List.of("late direction"), Campaign.directions());
             T.ok("failed commit rolls canon back",
                     !Campaign.canon().contains("must not remain"));
+            T.eq("failed commit rolls structured facts back",
+                    factsBeforeFailure, Campaign.factMemoryJson());
             String toggleBefore = Campaign.todoJson();
             T.ok("failed task edit reports failure", !Campaign.toggleTodo(1));
             T.eq("failed task edit rolls memory back", toggleBefore,

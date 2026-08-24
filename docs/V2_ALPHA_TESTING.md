@@ -6,7 +6,7 @@ state sample. Use a copied save. Keep an untouched copy of the save and its
 
 ## Build and install
 
-The source release is `2.0.0-alpha.2` and bridge API is `6`. The tracked JAR on
+The source release is `2.0.0-alpha.3` and bridge API is `7`. The tracked JAR on
 the development branch is not usable until it has been rebuilt from this exact
 checkout.
 
@@ -51,7 +51,9 @@ Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
   visit count and shows up to six pending detected events with their factual
   summaries and significance.
 - F5: switch the visible Event Inbox between pending events and recent history.
-  Narrated events are labelled with the page that consumed them.
+  Press again for structured Story Facts. Narrated events are labelled with
+  the page that consumed them; facts show type, provenance, confidence and
+  active/superseded status.
 - F9: provider-facing state, with privacy minimisation.
 - F10: provider connectivity test.
 - F11: local event journal.

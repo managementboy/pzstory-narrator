@@ -271,7 +271,10 @@ public final class Prompt {
             formed, a mood that has been building. Write nothing there that the \
             game asserted - the state block is re-read every time and does not \
             need remembering - and never record a fact about the world you were \
-            not given. Leave the block empty rather than padding it.
+            not given. Prefix every entry with exactly one memory kind: \
+            [world], [biography], [person], [possession], [injury], [knowledge], \
+            [belief], [promise], or [thread]. Example: "- [belief] she no longer \
+            trusts an unlocked door". Leave the block empty rather than padding it.
             """;
 
     /**
@@ -499,7 +502,10 @@ public final class Prompt {
                 + "has killed with the branch, and it was easier than he "
                 + "expected\". Only leave it empty on a page where genuinely "
                 + "nothing was established. Never record what the state block "
-                + "already says; that is re-read every time.\n");
+                + "already says; that is re-read every time. Prefix each line "
+                + "with one exact kind: [world], [biography], [person], "
+                + "[possession], [injury], [knowledge], [belief], [promise], "
+                + "or [thread].\n");
         sb.append("WRITE IT IN THE PRESENT TENSE. He is standing there right "
                 + "now, this second, with the game paused around him. \"He "
                 + "stands\", \"the room is\", \"the light comes through\" - not "

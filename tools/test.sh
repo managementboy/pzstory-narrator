@@ -39,6 +39,7 @@ src/de/fricke/pzstory/Config.java \
 src/de/fricke/pzstory/Delta.java \
 src/de/fricke/pzstory/EventDetector.java \
 src/de/fricke/pzstory/EventJournal.java \
+src/de/fricke/pzstory/FactMemory.java \
 src/de/fricke/pzstory/Endpoint.java \
 src/de/fricke/pzstory/Json.java \
 src/de/fricke/pzstory/JsonParse.java \
@@ -47,8 +48,10 @@ src/de/fricke/pzstory/NarrativeState.java \
 src/de/fricke/pzstory/PageResult.java \
 src/de/fricke/pzstory/PlaceRef.java \
 src/de/fricke/pzstory/Prompt.java \
+src/de/fricke/pzstory/RepetitionGuard.java \
 src/de/fricke/pzstory/Scenario.java \
 src/de/fricke/pzstory/StoryEvent.java \
+src/de/fricke/pzstory/StoryFact.java \
 src/de/fricke/pzstory/Settings.java \
 src/de/fricke/pzstory/Version.java \
 src/de/fricke/pzstory/WorldMemory.java"
