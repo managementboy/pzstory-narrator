@@ -272,6 +272,7 @@ public final class Llm {
                     result = CompletionResult.failure("postprocess",
                             "the completed page could not be validated or saved");
                 }
+                boolean recordedFailure = false;
                 synchronized (LOCK) {
                     if (active != req || req.status[0] != Status.COMMITTING) return;
                     if (result == null) {
@@ -280,7 +281,19 @@ public final class Llm {
                         req.failKind = result.kind;
                         req.error = Config.safeForDisplay(result.message);
                         req.status[0] = Status.ERROR;
+                        recordedFailure = true;
                     }
+                }
+                // A rejected page was invisible outside the game itself: the
+                // player saw a fault message on the device, but nothing
+                // reached console.txt unless onDone.complete() threw. Both
+                // result.kind and result.message are structural/diagnostic
+                // ("the page was N words; safe range is ...") - never the
+                // model's actual prose - so logging them is safe and is the
+                // only way this is diagnosable after the fact.
+                if (recordedFailure) {
+                    Config.log("page rejected: kind=" + result.kind
+                            + " reason=" + result.message);
                 }
             } finally {
                 // The request slot includes its success commit. Releasing it
