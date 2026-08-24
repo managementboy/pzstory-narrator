@@ -25,6 +25,7 @@ import zombie.ZomboidFileSystem;
 public final class Campaign {
 
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
     private static final int MAX_CANON = 2000;
     private static final int MAX_SEEN = 400;
@@ -46,6 +47,21 @@ public final class Campaign {
         }
     }
 
+    /**
+     * The note text and the exact number of one-shot directions included in a
+     * prompt.  Directions added after this capture belong to the next page and
+     * must not be consumed by an older request finishing in the background.
+     */
+    public static final class PromptNotes {
+        public final String text;
+        public final int directionCount;
+
+        PromptNotes(String text, int directionCount) {
+            this.text = text;
+            this.directionCount = directionCount;
+        }
+    }
+
     private static Path root;
     private static final List<Page> PAGES = new ArrayList<>();
     private static final LinkedHashSet<String> CANON = new LinkedHashSet<>();
@@ -62,6 +78,7 @@ public final class Campaign {
     private static boolean loaded = false;
     /** True only when a corrupt store could not be backed up safely. */
     private static boolean persistenceBlocked = false;
+    private static boolean backupRecoveryAttempted = false;
 
     /**
      * Which campaign this is, counting from process start.
@@ -124,6 +141,7 @@ public final class Campaign {
         DECLINED.clear();
         loaded = false;
         persistenceBlocked = false;
+        backupRecoveryAttempted = false;
     }
 
     // ------------------------------------------------------------------ load
@@ -139,6 +157,10 @@ public final class Campaign {
             }
             Map<String, Object> m = JsonParse.parseObject(
                     BoundedFiles.readUtf8(p, MAX_CAMPAIGN_BYTES));
+            int schema = JsonParse.num(m, "schema", 1);
+            if (schema != 1) {
+                throw new IllegalStateException("unsupported campaign schema " + schema);
+            }
 
             LinkedHashSet<String> nextCanon = new LinkedHashSet<>(
                     stringList(m.get("canon"), "canon", 10000, 300));
@@ -156,7 +178,7 @@ public final class Campaign {
             }
             String nextScenario = field(m, "scenario", 64);
             String nextPremise = field(m, "premise", 32000);
-            String nextLastState = field(m, "lastState", 4 * 1024 * 1024);
+            String nextLastState = field(m, "lastState", MAX_LAST_STATE_CHARS);
             List<String> nextTodo = stringList(m.get("todo"), "todo", 100, 512);
             List<String> nextAchieved = stringList(
                     m.get("achieved"), "achieved", 100, 512);
@@ -212,16 +234,33 @@ public final class Campaign {
         } catch (Throwable t) {
             clearLoadedData();
             loaded = true;
-            Path backup = p.resolveSibling(
+            Path corruptCopy = p.resolveSibling(
                     "campaign.json.corrupt-" + System.currentTimeMillis());
+            boolean preserved = false;
             try {
-                Files.copy(p, backup);
-                Config.log("campaign: preserved unreadable store as " + backup);
+                Files.copy(p, corruptCopy);
+                preserved = true;
+                Config.log("campaign: preserved unreadable store as " + corruptCopy);
             } catch (Throwable copyFailure) {
                 // Do not overwrite the only remaining copy on the next save.
                 persistenceBlocked = true;
                 Config.log("campaign: could not preserve unreadable store ("
                         + copyFailure + "); persistence is blocked for this session");
+            }
+            Path lastGood = p.resolveSibling("campaign.json.bak");
+            if (preserved && !backupRecoveryAttempted && Files.isRegularFile(lastGood)) {
+                backupRecoveryAttempted = true;
+                try {
+                    AtomicFiles.writeUtf8(p,
+                            BoundedFiles.readUtf8(lastGood, MAX_CAMPAIGN_BYTES));
+                    loaded = false;
+                    persistenceBlocked = false;
+                    Config.log("campaign: attempting recovery from campaign.json.bak");
+                    load();
+                    return;
+                } catch (Throwable recoveryFailure) {
+                    Config.log("campaign: backup recovery failed (" + recoveryFailure + ")");
+                }
             }
             Config.log("campaign: could not read the store (" + t
                     + ") - starting fresh in memory");
@@ -328,7 +367,9 @@ public final class Campaign {
             j.endArr();
             j.endObj();
 
-            AtomicFiles.writeUtf8(root().resolve("campaign.json"), j.toString());
+            Path target = root().resolve("campaign.json");
+            AtomicFiles.writeUtf8(target, j.toString(),
+                    target.resolveSibling("campaign.json.bak"), MAX_CAMPAIGN_BYTES);
             return true;
         } catch (Throwable t) {
             Config.log("campaign: SAVE FAILED - " + t);
@@ -352,18 +393,28 @@ public final class Campaign {
     public static synchronized void addPage(String title, String text, String stamp) {
         load();
         if (!addPageInMemory(title, text, stamp)) return;
-        save();
+        if (!save()) {
+            PAGES.remove(PAGES.size() - 1);
+            return;
+        }
         Config.log("campaign: page " + PAGES.size() + " kept (" + text.length() + " chars)");
     }
 
     private static boolean addPageInMemory(String title, String text, String stamp) {
         if (text == null || text.isBlank()) return false;
+        if (text.length() > 128 * 1024) return false;
+        if (PAGES.size() >= MAX_PAGES_ON_DISK) {
+            Config.log("campaign: page refused - archive reached "
+                    + MAX_PAGES_ON_DISK + " pages");
+            return false;
+        }
         // A page with no title shows as "NO PAGE" on the device and as a blank
         // line in the archive, which reads like the page itself failed. The
         // prompt asks for one; this makes sure the book always has something
         // to put in the index when it does not arrive.
         String t = title == null ? "" : title.trim();
         if (t.isEmpty()) t = "Page " + (PAGES.size() + 1);
+        if (t.length() > 512 || (stamp != null && stamp.length() > 128)) return false;
         PAGES.add(new Page(PAGES.size() + 1, t, text.trim(),
                 stamp == null ? "" : stamp));
         return true;
@@ -372,12 +423,15 @@ public final class Campaign {
     public static synchronized void addCanon(List<String> entries) {
         if (entries == null || entries.isEmpty()) return;
         load();
-        if (addCanonInMemory(entries)) save();
+        LinkedHashSet<String> old = new LinkedHashSet<>(CANON);
+        if (addCanonInMemory(entries) && !save()) {
+            CANON.clear(); CANON.addAll(old);
+        }
     }
 
     private static boolean addCanonInMemory(List<String> entries) {
         if (entries == null || entries.isEmpty()) return false;
-        int before = CANON.size();
+        boolean changed = false;
         for (String e : entries) {
             if (e == null) continue;
             String s = e.trim();
@@ -386,12 +440,12 @@ public final class Campaign {
             if (s.length() > 2 && s.length() <= 300 && !CANON.contains(s)) {
                 if (CANON.size() >= MAX_CANON) {
                     java.util.Iterator<String> oldest = CANON.iterator();
-                    if (oldest.hasNext()) { oldest.next(); oldest.remove(); }
+                    if (oldest.hasNext()) { oldest.next(); oldest.remove(); changed = true; }
                 }
-                CANON.add(s);
+                changed |= CANON.add(s);
             }
         }
-        return CANON.size() != before;
+        return changed;
     }
 
     public static synchronized List<String> canon() {
@@ -438,8 +492,13 @@ public final class Campaign {
     public static synchronized void openIfNew(String text) {
         load();
         if (!OPENING.isEmpty() || text == null || text.isBlank()) return;
+        if (text.length() > 32_000) return;
+        String old = OPENING;
         OPENING = text.strip();
-        save();
+        if (!save()) {
+            OPENING = old;
+            return;
+        }
         Config.log("campaign: opening recorded");
     }
 
@@ -463,6 +522,9 @@ public final class Campaign {
         load();
         Scenario sc = Scenario.byId(id);
         if (sc == null) return false;
+        if (!SCENARIO.isEmpty()) return SCENARIO.equals(id);
+        String oldScenario = SCENARIO;
+        List<String> oldTodo = new ArrayList<>(TODO);
         SCENARIO = id;
 
         // Seed the list. An empty checklist on the first screen tells the
@@ -471,10 +533,14 @@ public final class Campaign {
         // for the whole first session. These are not orders - they are the
         // obvious opening wants of someone in THIS story, and the player owns
         // every one of them: tick it, or strike it out and we learn something.
-        for (String s : sc.opening) addTodo(s, "story");
-        for (String s : Scenario.FIRST_DAYS) addTodo(s, "story");
+        for (String s : sc.opening) addTodoInMemory(s, "story");
+        for (String s : Scenario.FIRST_DAYS) addTodoInMemory(s, "story");
 
-        save();
+        if (!save()) {
+            SCENARIO = oldScenario;
+            TODO.clear(); TODO.addAll(oldTodo);
+            return false;
+        }
         Config.log("campaign: story kind set to " + id
                 + " (" + TODO.size() + " opening items)");
         return true;
@@ -488,8 +554,12 @@ public final class Campaign {
     public static synchronized void setPremise(String text) {
         load();
         if (!PREMISE.isEmpty() || text == null || text.isBlank()) return;
+        String old = PREMISE;
         PREMISE = text.strip();
-        save();
+        if (PREMISE.length() > 4 * 1024 || !save()) {
+            PREMISE = old;
+            return;
+        }
         Config.log("campaign: premise fixed (" + PREMISE.length() + " chars)");
     }
 
@@ -501,8 +571,11 @@ public final class Campaign {
 
     public static synchronized void rememberState(String snapshot) {
         load();
-        LAST_STATE = Delta.keep(snapshot);
-        save();
+        String old = LAST_STATE;
+        String next = Delta.keep(snapshot);
+        if (next == null || next.length() > MAX_LAST_STATE_CHARS) return;
+        LAST_STATE = next;
+        if (!save()) LAST_STATE = old;
     }
 
     public static synchronized String premise() {
@@ -535,11 +608,14 @@ public final class Campaign {
         String key = buildingName.isBlank()
                 ? roomName
                 : roomName + " (" + buildingName + ")";
+        LinkedHashSet<String> old = new LinkedHashSet<>(SEEN);
         if (!SEEN.contains(key) && SEEN.size() >= MAX_SEEN) {
             java.util.Iterator<String> oldest = SEEN.iterator();
             if (oldest.hasNext()) { oldest.next(); oldest.remove(); }
         }
-        if (SEEN.add(key)) save();
+        if (SEEN.add(key) && !save()) {
+            SEEN.clear(); SEEN.addAll(old);
+        }
     }
 
     private static String bounded(String text, int maxChars) {
@@ -599,7 +675,10 @@ public final class Campaign {
     public static synchronized boolean addTodo(String text, String source) {
         load();
         if (!addTodoInMemory(text, source)) return false;
-        save();
+        if (!save()) {
+            TODO.remove(TODO.size() - 1);
+            return false;
+        }
         return true;
     }
 
@@ -655,44 +734,77 @@ public final class Campaign {
             String stamp,
             List<String> canon,
             String todo,
-            String state) {
+            String state,
+            int consumedDirections) {
         if (GENERATION.get() != expectedGeneration) {
             Config.log("campaign: dropping completed page for stale generation "
                     + expectedGeneration + " (current " + GENERATION.get() + ")");
             return false;
         }
         load();
-        if (text == null || text.isBlank()) return false;
+        if (title == null || title.isBlank() || title.length() > 120) return false;
+        if (text == null || text.isBlank() || text.length() > 32 * 1024) return false;
+        if (premise != null && premise.length() > 4 * 1024) return false;
+        if (PAGES.isEmpty() && PREMISE.isEmpty()
+                && (premise == null || premise.isBlank())) return false;
+        String keptState = Delta.keep(state);
+        if (keptState == null || keptState.length() > MAX_LAST_STATE_CHARS) return false;
 
+        // Save failures are not commits. Keep a small in-memory undo record so
+        // the UI, a successor request, and the disk all continue to see the
+        // same old campaign when persistence is unavailable.
+        List<Page> oldPages = new ArrayList<>(PAGES);
+        LinkedHashSet<String> oldCanon = new LinkedHashSet<>(CANON);
+        List<String> oldTodo = new ArrayList<>(TODO);
+        List<String> oldDirections = new ArrayList<>(DIRECTIONS);
+        String oldPremise = PREMISE;
+        String oldLastState = LAST_STATE;
+
+        if (!addPageInMemory(title, text, stamp)) return false;
         if (PREMISE.isEmpty() && premise != null && !premise.isBlank()) {
             PREMISE = premise.strip();
         }
-        addPageInMemory(title, text, stamp);
         addCanonInMemory(canon);
         addTodoInMemory(todo, "story");
-        DIRECTIONS.clear();
-        LAST_STATE = Delta.keep(state);
+        int spent = Math.max(0, Math.min(consumedDirections, DIRECTIONS.size()));
+        if (spent > 0) DIRECTIONS.subList(0, spent).clear();
+        LAST_STATE = keptState;
         boolean stored = save();
+
+        if (!stored) {
+            PAGES.clear(); PAGES.addAll(oldPages);
+            CANON.clear(); CANON.addAll(oldCanon);
+            TODO.clear(); TODO.addAll(oldTodo);
+            DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
+            PREMISE = oldPremise;
+            LAST_STATE = oldLastState;
+            Config.log("campaign: generated page rolled back after save failure");
+            return false;
+        }
 
         Config.log("campaign: page " + PAGES.size() + " committed atomically ("
                 + text.length() + " chars, generation " + expectedGeneration
-                + (stored ? ")" : ", memory only - disk write failed)"));
-        return stored;
+                + ", " + spent + " direction(s) consumed)");
+        return true;
     }
 
-    public static synchronized void toggleTodo(int oneBased) {
+    public static synchronized boolean toggleTodo(int oneBased) {
         load();
-        if (oneBased < 1 || oneBased > TODO.size()) return;
+        if (oneBased < 1 || oneBased > TODO.size()) return false;
         String row = TODO.get(oneBased - 1);
         // Ticking a deferred item brings it straight back as done - the player
         // did the thing they had shelved, which is the happy path.
         TODO.set(oneBased - 1, enc(isDone(row) ? OPEN : DONE, srcOf(row), textOf(row)));
-        save();
+        if (save()) return true;
+        TODO.set(oneBased - 1, row);
+        return false;
     }
 
     /** Ticked items graduate to the record of what she has actually done. */
-    public static synchronized void clearDoneTodo() {
+    public static synchronized boolean clearDoneTodo() {
         load();
+        List<String> oldTodo = new ArrayList<>(TODO);
+        List<String> oldAchieved = new ArrayList<>(ACHIEVED);
         boolean any = false;
         for (String row : new ArrayList<>(TODO)) {
             if (!isDone(row)) continue;
@@ -700,7 +812,12 @@ public final class Campaign {
             TODO.remove(row);
             any = true;
         }
-        if (any) save();
+        if (any && !save()) {
+            TODO.clear(); TODO.addAll(oldTodo);
+            ACHIEVED.clear(); ACHIEVED.addAll(oldAchieved);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -711,26 +828,37 @@ public final class Campaign {
      * stays in the book, stops counting against the proposal cap so the story
      * can offer something else, and comes back the moment it is tapped again.
      */
-    public static synchronized void laterTodo(int oneBased) {
+    public static synchronized boolean laterTodo(int oneBased) {
         load();
-        if (oneBased < 1 || oneBased > TODO.size()) return;
+        if (oneBased < 1 || oneBased > TODO.size()) return false;
         String row = TODO.get(oneBased - 1);
         int now = stateOf(row) == LATER ? OPEN : LATER;
         TODO.set(oneBased - 1, enc(now, srcOf(row), textOf(row)));
-        save();
+        if (save()) return true;
+        TODO.set(oneBased - 1, row);
+        return false;
     }
 
     /**
      * Struck out without being done. Remembered as a refusal, so the narrator
      * stops offering this and learns the shape of what she will not do.
      */
-    public static synchronized void dropTodo(int oneBased) {
+    public static synchronized boolean dropTodo(int oneBased) {
         load();
-        if (oneBased < 1 || oneBased > TODO.size()) return;
+        List<String> oldTodo = new ArrayList<>(TODO);
+        List<String> oldAchieved = new ArrayList<>(ACHIEVED);
+        List<String> oldDeclined = new ArrayList<>(DECLINED);
+        if (oneBased < 1 || oneBased > TODO.size()) return false;
         String row = TODO.remove(oneBased - 1);
         if (isDone(row)) remember(ACHIEVED, textOf(row));
         else remember(DECLINED, textOf(row));
-        save();
+        if (!save()) {
+            TODO.clear(); TODO.addAll(oldTodo);
+            ACHIEVED.clear(); ACHIEVED.addAll(oldAchieved);
+            DECLINED.clear(); DECLINED.addAll(oldDeclined);
+            return false;
+        }
+        return true;
     }
 
     private static void remember(List<String> into, String text) {
@@ -826,23 +954,38 @@ public final class Campaign {
             case "observation" -> {
                 // Permanent. Marked so a later page can tell the player's
                 // colour apart from the narrator's own inventions.
-                addCanon(List.of("(the player observes) " + s));
-                return "kept as canon";
+                String prefix = "(the player observes) ";
+                if (s.length() > 300 - prefix.length()) {
+                    s = s.substring(0, 300 - prefix.length());
+                }
+                LinkedHashSet<String> old = new LinkedHashSet<>(CANON);
+                boolean added = addCanonInMemory(List.of(prefix + s));
+                if (added && !save()) {
+                    CANON.clear(); CANON.addAll(old);
+                    return "could not save that note";
+                }
+                return added ? "kept as canon" : "already kept as canon";
             }
             case "direction" -> {
                 if (DIRECTIONS.size() >= MAX_DIRECTIONS) {
                     return "too many NEXT notes - use or remove one first";
                 }
                 DIRECTIONS.add(s);
-                save();
+                if (!save()) {
+                    DIRECTIONS.remove(DIRECTIONS.size() - 1);
+                    return "could not save that note";
+                }
                 return "will steer the next page";
             }
             case "standing" -> {
                 if (!STANDING.contains(s) && STANDING.size() >= MAX_STANDING) {
                     return "too many ALWAYS notes - remove one first";
                 }
-                STANDING.add(s);
-                save();
+                boolean added = STANDING.add(s);
+                if (added && !save()) {
+                    STANDING.remove(s);
+                    return "could not save that note";
+                }
                 return "in force until you remove it";
             }
             default -> {
@@ -858,9 +1001,11 @@ public final class Campaign {
 
     /** Called only after a page is successfully written: directions are spent. */
     public static synchronized void clearDirections() {
+        load();
         if (DIRECTIONS.isEmpty()) return;
+        List<String> old = new ArrayList<>(DIRECTIONS);
         DIRECTIONS.clear();
-        save();
+        if (!save()) DIRECTIONS.addAll(old);
     }
 
     public static synchronized List<String> standing() {
@@ -873,8 +1018,9 @@ public final class Campaign {
         List<String> l = new ArrayList<>(STANDING);
         if (oneBased < 1 || oneBased > l.size()) return false;
         STANDING.remove(l.get(oneBased - 1));
-        save();
-        return true;
+        if (save()) return true;
+        STANDING.clear(); STANDING.addAll(l);
+        return false;
     }
 
     /**
@@ -885,8 +1031,15 @@ public final class Campaign {
      * worse than not having the feature at all.
      */
     public static synchronized String notesForPrompt() {
+        return promptNotes().text;
+    }
+
+    /** Captures prompt text and one-shot direction count under one lock. */
+    public static synchronized PromptNotes promptNotes() {
         load();
-        if (STANDING.isEmpty() && DIRECTIONS.isEmpty()) return "";
+        if (STANDING.isEmpty() && DIRECTIONS.isEmpty()) {
+            return new PromptNotes("", 0);
+        }
         StringBuilder sb = new StringBuilder(1024);
         if (!STANDING.isEmpty()) {
             sb.append("Standing instructions, in force until the player changes them:\n");
@@ -897,7 +1050,7 @@ public final class Campaign {
             sb.append("For this page specifically:\n");
             for (String s : DIRECTIONS) sb.append("- ").append(s).append('\n');
         }
-        return sb.toString();
+        return new PromptNotes(sb.toString(), DIRECTIONS.size());
     }
 
     public static synchronized String notesJson() {

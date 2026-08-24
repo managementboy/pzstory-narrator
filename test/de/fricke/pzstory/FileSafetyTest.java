@@ -23,6 +23,13 @@ public final class FileSafetyTest {
                 T.ok("byte ceiling rejects multibyte overflow",
                         String.valueOf(expected.getMessage()).contains("exceeds 3 bytes"));
             }
+            Files.write(input, new byte[] { (byte) 0xc3, 0x28 });
+            try {
+                BoundedFiles.readUtf8(input, 4);
+                T.ok("malformed UTF-8 is rejected", false);
+            } catch (IOException expected) {
+                T.ok("malformed UTF-8 is rejected", true);
+            }
 
             T.group("AtomicFiles - replacement is complete and repeatable");
             Path target = root.resolve("nested/state.json");
@@ -33,6 +40,29 @@ public final class FileSafetyTest {
                     Files.readString(target));
             T.ok("temporary file removed",
                     !Files.exists(target.resolveSibling("state.json.tmp")));
+
+            T.group("AtomicFiles - last-known-good rotation");
+            Path backed = root.resolve("nested/campaign.json");
+            Path backup = root.resolve("nested/campaign.json.bak");
+            AtomicFiles.writeUtf8(backed, "old", backup);
+            AtomicFiles.writeUtf8(backed, "new", backup);
+            T.eq("new target installed", "new", Files.readString(backed));
+            T.eq("previous target retained", "old", Files.readString(backup));
+            AtomicFiles.writeUtf8(backed, "newest", backup);
+            T.eq("backup advances one generation", "new", Files.readString(backup));
+
+            T.group("AtomicFiles - byte ceiling precedes replacement");
+            try {
+                AtomicFiles.writeUtf8(backed, "too large", backup, 3);
+                T.ok("oversized replacement is rejected", false);
+            } catch (IOException expected) {
+                T.ok("oversized replacement is rejected",
+                        String.valueOf(expected.getMessage()).contains("exceeds 3 bytes"));
+            }
+            T.eq("oversized write leaves target intact", "newest",
+                    Files.readString(backed));
+            T.eq("oversized write leaves backup intact", "new",
+                    Files.readString(backup));
         } catch (Throwable t) {
             T.ok("temporary-file fixture completed: " + t, false);
         } finally {

@@ -60,7 +60,6 @@ public final class StateReader {
         Json j = new Json().obj();
         j.put("schema", 1);
         j.put("modVersion", Main.VERSION);
-        j.put("wallClock", System.currentTimeMillis());
 
         IsoPlayer p = null;
         try {
@@ -98,6 +97,7 @@ public final class StateReader {
     // ---------------------------------------------------------------- time
 
     private static void gameTime(Json j) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             GameTime gt = GameTime.getInstance();
             if (gt == null) return;
@@ -119,6 +119,7 @@ public final class StateReader {
             } catch (Throwable ignored) { }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("time", t);
         }
     }
@@ -126,9 +127,9 @@ public final class StateReader {
     // ----------------------------------------------------------- character
 
     private static void character(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             j.objKey("character");
-            j.put("username", p.getUsername());
             SurvivorDesc d = p.getDescriptor();
             if (d != null) {
                 j.put("forename", d.getForename());
@@ -161,6 +162,7 @@ public final class StateReader {
             // spent points to have, a negative one is a flaw they took in order
             // to afford something else. That is precisely the biography signal
             // the charter asks the narrator to dramatise.
+            Json.Checkpoint traitsCheckpoint = j.checkpoint();
             try {
                 var ct = p.getCharacterTraits();
                 if (ct != null) {
@@ -212,6 +214,7 @@ public final class StateReader {
                     }
                 }
             } catch (Throwable t) {
+                j.rollback(traitsCheckpoint);
                 note("traits", t);
             }
 
@@ -221,6 +224,7 @@ public final class StateReader {
             j.put("inventoryWeight", p.getInventoryWeight());
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("character", t);
         }
     }
@@ -228,6 +232,7 @@ public final class StateReader {
     // ------------------------------------------------------------ position
 
     private static void position(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             j.objKey("position");
             int x = (int) p.getX();
@@ -255,6 +260,8 @@ public final class StateReader {
                 RoomDef room = sq.getRoomDef();
                 if (room != null) {
                     j.put("room", room.getName());
+                    String roomId = stableEngineId(room);
+                    if (roomId != null) j.put("roomId", roomId);
                     // Words, not a count. Reported as a number it read like a
                     // measurement and came back as "the thirty-foot room" -
                     // a statistic quoted, in a unit that was never true. A
@@ -301,6 +308,7 @@ public final class StateReader {
             j.endObj();
             vehicle(j, p);
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("position", t);
         }
     }
@@ -319,6 +327,7 @@ public final class StateReader {
      * true, so it now gets its own block, near the top, in plain words.
      */
     private static void vehicle(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             BaseVehicle v = p.getVehicle();
             if (v == null) return;
@@ -330,12 +339,15 @@ public final class StateReader {
 
             // "Base.fhqB10M_Riv" is a file name, not something a person says.
             String script = String.valueOf(v.getScriptName());
-            j.put("model", Vehicles.name(script));
-            if (!Vehicles.known(script)) {
-                // Say so rather than letting a script id be quoted as a make.
-                j.put("modelUnknown", "This is the game's internal id, not a "
-                        + "name. Do not print it. Call it what it looks like - "
-                        + "a car, a van, a truck.");
+            if (Vehicles.known(script)) {
+                j.put("model", Vehicles.name(script));
+            } else {
+                // Never send a mod's engine script id merely to tell the model
+                // not to quote it. Generic and true is safer than specific and
+                // machine-facing.
+                j.put("model", "an unfamiliar vehicle");
+                j.put("modelUnknown", "The game did not provide a human-readable "
+                        + "make or model. Call it only a vehicle.");
             }
 
             try { j.put("driving", v.isDriver(p)); } catch (Throwable ignored) { }
@@ -364,6 +376,7 @@ public final class StateReader {
             try { if (v.isDoorAlarmSounding()) j.put("itsAlarmIsGoingOff", true); } catch (Throwable ignored) { }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("vehicle", t);
         }
     }
@@ -371,6 +384,7 @@ public final class StateReader {
     // --------------------------------------------------------------- stats
 
     private static void stats(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             var st = p.getStats();
             if (st == null) return;
@@ -390,6 +404,7 @@ public final class StateReader {
             j.put("zombiesVeryClose", st.getNumVeryCloseZombies());
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("stats", t);
         }
     }
@@ -413,12 +428,15 @@ public final class StateReader {
      * registers its own moodle appears here for free.
      */
     private static void feeling(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             var mo = p.getMoodles();
             if (mo == null) return;
             boolean opened = false;
             for (java.lang.reflect.Field f
                     : zombie.scripting.objects.MoodleType.class.getFields()) {
+                Json.Checkpoint moodleCheckpoint = j.checkpoint();
+                boolean wasOpened = opened;
                 try {
                     if (!java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
                     if (f.getType() != zombie.scripting.objects.MoodleType.class) continue;
@@ -448,11 +466,14 @@ public final class StateReader {
                     j.put("level", lvl);
                     j.endObj();
                 } catch (Throwable t) {
+                    j.rollback(moodleCheckpoint);
+                    opened = wasOpened;
                     note("moodle[" + f.getName() + "]", t);
                 }
             }
             if (opened) j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("feeling", t);
         }
     }
@@ -466,6 +487,7 @@ public final class StateReader {
      * them into news the moment they flip.
      */
     private static void utilities(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             j.objKey("utilities");
             try {
@@ -513,6 +535,7 @@ public final class StateReader {
             }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("utilities", t);
         }
     }
@@ -543,6 +566,7 @@ public final class StateReader {
      * until now the page could not tell the two apart.
      */
     private static void noise(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             var wsm = zombie.WorldSoundManager.instance;
             if (wsm == null) return;
@@ -602,11 +626,13 @@ public final class StateReader {
             }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("noise", t);
         }
     }
 
     private static void nutrition(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             Nutrition n = p.getNutrition();
             if (n == null) return;
@@ -620,6 +646,7 @@ public final class StateReader {
             j.put("weight", n.getWeight());
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("nutrition", t);
         }
     }
@@ -627,6 +654,7 @@ public final class StateReader {
     // -------------------------------------------------------------- health
 
     private static void health(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             BodyDamage bd = p.getBodyDamage();
             if (bd == null) return;
@@ -649,6 +677,7 @@ public final class StateReader {
             // detail that makes a chapter feel observed rather than reported.
             j.arrKey("wounds");
             for (int i = 0; i < 17; i++) {
+                Json.Checkpoint woundCheckpoint = j.checkpoint();
                 try {
                     float hp = bd.getBodyPartHealth(i);
                     boolean bitten = bd.IsBitten(i);
@@ -684,6 +713,7 @@ public final class StateReader {
                     }
                     j.endObj();
                 } catch (Throwable t) {
+                    j.rollback(woundCheckpoint);
                     // A single part failing must not lose the rest - but it
                     // must not vanish either. Swallowing this silently is what
                     // hid the missing strain reading for a whole build cycle.
@@ -696,6 +726,7 @@ public final class StateReader {
             // array means she really is unhurt.
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("health", t);
         }
     }
@@ -703,6 +734,7 @@ public final class StateReader {
     // -------------------------------------------------------------- skills
 
     private static void skills(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             var xp = p.getXp();
             j.objKey("skills");
@@ -746,6 +778,7 @@ public final class StateReader {
             }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("skills", t);
         }
     }
@@ -753,6 +786,7 @@ public final class StateReader {
     // ----------------------------------------------------------- inventory
 
     private static void inventory(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             // WHAT IS IN HIS HANDS, stated even when the answer is nothing.
             //
@@ -792,7 +826,10 @@ public final class StateReader {
                 if (it == null) continue;
                 String name = displayName(it);
 
-                if (it instanceof zombie.inventory.types.Clothing) {
+                boolean equipped = false;
+                try { equipped = it.isEquipped() || p.isEquipped(it); }
+                catch (Throwable ignored) { }
+                if (it instanceof zombie.inventory.types.Clothing && equipped) {
                     bump(worn, name);
                 } else {
                     bump(held, name);
@@ -808,8 +845,9 @@ public final class StateReader {
                     // old one lost and a new one gained.
                     if (bags.size() < MAX_INVENTORY_BAGS) {
                         Bag b = new Bag(name);
+                        b.id = stableEngineId(it);
                         try {
-                            if (it.isEquipped() || p.isEquipped(it)) b.worn = "worn";
+                            if (equipped) b.worn = "worn";
                             String at = it.getAttachedSlotType();
                             if (at != null && !at.isBlank()) b.worn = boundedLabel(at);
                         } catch (Throwable ignored) { }
@@ -833,6 +871,7 @@ public final class StateReader {
                 for (Bag b : bags) {
                     j.obj();
                     j.put("name", b.name);
+                    if (b.id != null) j.put("id", b.id);
                     if (b.worn != null) j.put("wornAt", b.worn);
                     j.arrKey("contents");
                     for (Map.Entry<String, int[]> e : b.contents.entrySet()) {
@@ -855,6 +894,7 @@ public final class StateReader {
                                 + MAX_INVENTORY_ITEMS + " items were described.");
             }
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("inventory", t);
         }
     }
@@ -862,6 +902,7 @@ public final class StateReader {
     /** A container carried on the person, with its contents counted. */
     private static final class Bag {
         final String name;
+        String id;              // local delta identity; removed before provider send
         String worn;            // null when merely held in a hand
         final Map<String, int[]> contents = new LinkedHashMap<>();
         Bag(String name) { this.name = name; }
@@ -1045,6 +1086,7 @@ public final class StateReader {
      * and re-described the furniture instead.
      */
     private static void doingAndWeather(Json j, IsoPlayer p) {
+        Json.Checkpoint doingCheckpoint = j.checkpoint();
         try {
             j.objKey("rightNow");
             String act = null;
@@ -1060,9 +1102,11 @@ public final class StateReader {
             try { if (p.isAsleep()) j.put("asleep", true); } catch (Throwable ignored) { }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(doingCheckpoint);
             note("doing", t);
         }
 
+        Json.Checkpoint weatherCheckpoint = j.checkpoint();
         try {
             var cm = zombie.iso.weather.ClimateManager.getInstance();
             if (cm == null) return;
@@ -1082,6 +1126,7 @@ public final class StateReader {
             if (wind > 20) j.put("wind", wind > 45 ? "strong" : "noticeable");
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(weatherCheckpoint);
             note("weather", t);
         }
     }
@@ -1101,6 +1146,7 @@ public final class StateReader {
      * is forbidden to quote anyway.
      */
     private static void threat(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             var cell = zombie.iso.IsoWorld.instance == null
                     ? null : zombie.iso.IsoWorld.instance.getCell();
@@ -1114,9 +1160,15 @@ public final class StateReader {
                 if (z == null) continue;
                 float d = z.DistTo(p);
                 if (d > 45) continue;
-                near++;
-                if (d <= 12) close++;
-                if (z.getTarget() == p) onMe++;
+                boolean pursuing = z.getTarget() == p;
+                boolean visible = visibleToPlayer(z.getCurrentSquare(), p);
+                // A loaded zombie behind a wall is not "within sight". A
+                // pursuer is still urgent even if it has just left the field
+                // of view, so retain that independently from the visible count.
+                if (!visible && !pursuing) continue;
+                if (visible) near++;
+                if (visible && d <= 12) close++;
+                if (pursuing) onMe++;
             }
 
             // The ones that are already down. The room census counts bodies
@@ -1131,6 +1183,7 @@ public final class StateReader {
                     for (int dy = -10; dy <= 10 && bodies < 60; dy++) {
                         var sq = cell2.getGridSquare(px + dx, py + dy, pz);
                         if (sq == null) continue;
+                        if (!visibleToPlayer(sq, p)) continue;
                         var bs = sq.getDeadBodys();
                         if (bs != null) bodies += bs.size();
                     }
@@ -1139,8 +1192,8 @@ public final class StateReader {
                 note("bodies", t);
             }
 
-            if (near == 0 && bodies == 0) return;   // silence is its own answer
-            if (near == 0) {
+            if (near == 0 && onMe == 0 && bodies == 0) return; // silence is its own answer
+            if (near == 0 && onMe == 0) {
                 j.objKey("theDead");
                 j.put("onTheGroundNearby", band(bodies));
                 j.put("note", "None of them standing. What is here is already "
@@ -1152,15 +1205,16 @@ public final class StateReader {
             }
 
             j.objKey("theDead");
-            j.put("withinSight", band(near));
+            if (near > 0) j.put("withinSight", band(near));
             if (close > 0) j.put("closeEnoughToHear", band(close));
-            if (onMe > 0)  j.put("comingForHer", band(onMe));
+            if (onMe > 0)  j.put("comingForThem", band(onMe));
             if (bodies > 0) j.put("onTheGroundNearby", band(bodies));
             j.put("note", onMe > 0
-                    ? "They have been noticed. This outranks everything else in the state."
+                    ? "They are being pursued. This outranks everything else in the state."
                     : "In view but not yet aware. This is the most important thing on the page.");
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("threat", t);
         }
     }
@@ -1223,6 +1277,7 @@ public final class StateReader {
 
     /** Level 1: he knows where he is standing, and nothing about it. */
     private static void basicPlace(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             IsoGridSquare sq = p.getCurrentSquare();
             if (sq == null) return;
@@ -1232,6 +1287,7 @@ public final class StateReader {
             if (room != null && room.getName() != null) j.put("room", room.getName());
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("place", t);
         }
     }
@@ -1253,6 +1309,7 @@ public final class StateReader {
      *    barricade are the first things anyone notices about a room.
      */
     private static void surroundings(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
         try {
             IsoGridSquare sq = p.getCurrentSquare();
             if (sq == null) return;
@@ -1284,6 +1341,7 @@ public final class StateReader {
             for (int i = 0; i < limit; i++) {
                 IsoGridSquare s = squares.get(i);
                 if (s == null) continue;
+                if (!visibleToPlayer(s, p)) continue;
                 try {
                     var bs = s.getDeadBodys();
                     if (bs != null) bodies += bs.size();
@@ -1338,6 +1396,14 @@ public final class StateReader {
                 }
             }
 
+            j.put("visibilityNote", "Only room squares visible from the survivor's "
+                    + "current position were surveyed. Unseen corners and anything "
+                    + "behind an obstruction are deliberately absent.");
+            if (limit < squares.size()) {
+                j.put("surroundingsTruncated", "This unusually large room exceeded "
+                        + "the survey budget; the visible-object list may be incomplete.");
+            }
+
             emit(j, "furniture", furniture);
             emit(j, "onTheFloor", floor);
             if (bodies > 0) {
@@ -1372,6 +1438,7 @@ public final class StateReader {
             }
             j.endObj();
         } catch (Throwable t) {
+            j.rollback(checkpoint);
             note("surroundings", t);
         }
     }
@@ -1388,6 +1455,71 @@ public final class StateReader {
         j.arrKey("readErrors");
         for (String e : lastErrors) j.val(e);
         j.endArr();
+    }
+
+    /** Stable ids are local delta keys, never provider-facing narrative data. */
+    private static String stableEngineId(Object object) {
+        if (object == null) return null;
+        for (String method : new String[] { "getID", "getId" }) {
+            try {
+                Object value = object.getClass().getMethod(method).invoke(object);
+                if (value instanceof Number || value instanceof String) {
+                    String id = String.valueOf(value);
+                    if (!id.isBlank()) return boundedLabel(id);
+                }
+            } catch (Throwable ignored) { }
+        }
+        for (String field : new String[] { "ID", "id" }) {
+            try {
+                Object value = object.getClass().getField(field).get(object);
+                if (value instanceof Number || value instanceof String) {
+                    String id = String.valueOf(value);
+                    if (!id.isBlank()) return boundedLabel(id);
+                }
+            } catch (Throwable ignored) { }
+        }
+        return null;
+    }
+
+    /**
+     * Best-effort current visibility without linking the mod to one B42 method
+     * spelling. Build 42 point releases have moved these helpers; reflection
+     * keeps the reader compatible and fails closed when visibility is unknown.
+     */
+    private static boolean visibleToPlayer(IsoGridSquare square, IsoPlayer player) {
+        if (square == null || player == null) return false;
+        try { if (square == player.getCurrentSquare()) return true; }
+        catch (Throwable ignored) { }
+
+        int playerNum = 0;
+        try {
+            Object value = player.getClass().getMethod("getIndex").invoke(player);
+            if (value instanceof Number n) playerNum = n.intValue();
+        } catch (Throwable missingCurrentName) {
+            try {
+                Object value = player.getClass().getMethod("getPlayerNum").invoke(player);
+                if (value instanceof Number n) playerNum = n.intValue();
+            } catch (Throwable ignored) { }
+        }
+
+        // isCanSee is the current line-of-sight flag. isCouldSee is broader
+        // (and isSeen may describe remembered visibility), so treating either
+        // as current sight can reveal furniture or zombies behind an obstacle.
+        // Fall back to the older spelling only when isCanSee does not exist,
+        // never merely because it returned false.
+        for (String method : new String[] { "isCanSee", "isSeen" }) {
+            try {
+                Object value = square.getClass().getMethod(method, int.class)
+                        .invoke(square, playerNum);
+                return Boolean.TRUE.equals(value);
+            } catch (NoSuchMethodException missing) {
+                // Try the next Build 42 spelling.
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+        // Unknown is not permission to reveal an object behind a wall.
+        return false;
     }
 
 }

@@ -10,6 +10,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
@@ -36,7 +37,33 @@ public final class Llm {
     private static final int MAX_SSE_LINE     = 256 * 1024;
     private static final int MAX_OUTPUT_CHARS = 128 * 1024;
 
-    public enum Status { IDLE, CONNECTING, STREAMING, DONE, ERROR, CANCELLED }
+    public enum Status {
+        IDLE, CONNECTING, STREAMING, RECEIVED, COMMITTING, DONE, ERROR, CANCELLED
+    }
+
+    /** Runs after a complete stream and before DONE becomes visible to Lua. */
+    @FunctionalInterface
+    public interface Completion {
+        CompletionResult complete(long generation, String text);
+    }
+
+    /** A reason the complete response must not be exposed as a saved page. */
+    public static final class CompletionResult {
+        public final String kind;
+        public final String message;
+
+        private CompletionResult(String kind, String message) {
+            this.kind = kind;
+            this.message = message;
+        }
+
+        public static CompletionResult failure(String kind, String message) {
+            return new CompletionResult(
+                    kind == null || kind.isBlank() ? "postprocess" : kind,
+                    message == null || message.isBlank()
+                            ? "the completed page could not be kept" : message);
+        }
+    }
 
     private static final ExecutorService POOL =
             Executors.newSingleThreadExecutor(r -> {
@@ -140,7 +167,7 @@ public final class Llm {
     }
 
     public static String start(String system, String user,
-                               java.util.function.BiConsumer<Long, String> onDone) {
+                               Completion onDone) {
         return start(system, "", user, onDone);
     }
 
@@ -161,7 +188,7 @@ public final class Llm {
      *               a callback that is already running.
      */
     public static String start(String system, String cached, String tail,
-                               java.util.function.BiConsumer<Long, String> onDone) {
+                               Completion onDone) {
         final String user = tail;
         final String prefix = cached;
         final Req req;
@@ -191,7 +218,7 @@ public final class Llm {
             workerBusy = true;
         }
 
-        POOL.submit(() -> {
+        Runnable work = () -> {
             try {
                 run(req, p, system, prefix, user);
                 // Read the outcome under the lock, then decide outside it.
@@ -199,11 +226,19 @@ public final class Llm {
                 final String text;
                 synchronized (LOCK) {
                     ok = active == req
-                            && req.status[0] == Status.DONE
+                            && req.status[0] == Status.RECEIVED
                             && req.full.length() > 0;
                     text = req.full.toString();
                 }
-                if (!ok || onDone == null) return;
+                if (!ok) return;
+                if (onDone == null) {
+                    synchronized (LOCK) {
+                        if (active == req && req.status[0] == Status.RECEIVED) {
+                            req.status[0] = Status.DONE;
+                        }
+                    }
+                    return;
+                }
 
                 // This early check avoids parsing a completed response after a
                 // save change. It is deliberately NOT the correctness barrier:
@@ -214,13 +249,38 @@ public final class Llm {
                     Config.log("dropping a finished page: the save changed while it"
                             + " was being written (gen " + req.generation
                             + " -> " + Campaign.generation() + ")");
+                    synchronized (LOCK) {
+                        if (active == req && req.status[0] == Status.RECEIVED) {
+                            req.failKind = "save_changed";
+                            req.error = "the save changed while this page was being written; "
+                                    + "nothing was saved";
+                            req.status[0] = Status.CANCELLED;
+                        }
+                    }
                     return;
                 }
                 if (!req.callbackRan.compareAndSet(false, true)) return; // at most once
+                synchronized (LOCK) {
+                    if (active != req || req.status[0] != Status.RECEIVED) return;
+                    req.status[0] = Status.COMMITTING;
+                }
+                CompletionResult result;
                 try {
-                    onDone.accept(req.generation, text);
+                    result = onDone.complete(req.generation, text);
                 } catch (Throwable t) {
                     Config.log("post-stream hook failed: " + t);
+                    result = CompletionResult.failure("postprocess",
+                            "the completed page could not be validated or saved");
+                }
+                synchronized (LOCK) {
+                    if (active != req || req.status[0] != Status.COMMITTING) return;
+                    if (result == null) {
+                        req.status[0] = Status.DONE;
+                    } else {
+                        req.failKind = result.kind;
+                        req.error = Config.safeForDisplay(result.message);
+                        req.status[0] = Status.ERROR;
+                    }
                 }
             } finally {
                 // The request slot includes its success commit. Releasing it
@@ -228,7 +288,19 @@ public final class Llm {
                 // campaign (page present, canon and state not yet present).
                 synchronized (LOCK) { workerBusy = false; }
             }
-        });
+        };
+        try {
+            POOL.submit(work);
+        } catch (Throwable t) {
+            synchronized (LOCK) {
+                workerBusy = false;
+                req.failKind = "executor";
+                req.error = "the background writer could not be started";
+                req.status[0] = Status.ERROR;
+            }
+            Config.log("request worker submission failed: " + t);
+            return "the background writer could not be started";
+        }
         return null;
     }
 
@@ -245,6 +317,10 @@ public final class Llm {
         synchronized (LOCK) {
             r = active;
             if (r == null || r.isTerminal()) return;
+            // Once persistence has begun, cancellation cannot safely make a
+            // completed atomic commit disappear. Finish the millisecond-scale
+            // commit and report its real outcome instead.
+            if (r.status[0] == Status.COMMITTING) return;
             r.cancelled.set(true);
             r.status[0] = Status.CANCELLED;
         }
@@ -427,6 +503,9 @@ public final class Llm {
         } catch (ResponseTooLarge e) {
             req.failKind = "too_large";
             fail(req, e.getMessage());
+        } catch (java.nio.charset.CharacterCodingException e) {
+            req.failKind = "protocol";
+            fail(req, "the provider stream was not valid UTF-8; nothing was saved");
         } catch (Throwable t) {
             fail(req, t.getClass().getSimpleName() + ": " + Config.redact(String.valueOf(t.getMessage())));
         } finally {
@@ -479,7 +558,9 @@ public final class Llm {
         try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
                      "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
              BufferedReader r = new BufferedReader(
-                     new InputStreamReader(limited, StandardCharsets.UTF_8))) {
+                     new InputStreamReader(limited, StandardCharsets.UTF_8.newDecoder()
+                             .onMalformedInput(CodingErrorAction.REPORT)
+                             .onUnmappableCharacter(CodingErrorAction.REPORT)))) {
             String line;
             while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
                 if (req.cancelled.get()) { Config.log("stream cancelled by player"); return; }
@@ -490,7 +571,7 @@ public final class Llm {
                 // the only thing that makes an OpenAI-compatible stream
                 // complete. It was being skipped, so reaching it and reaching
                 // a dropped socket looked identical.
-                if ("[DONE]".equals(payload)) { req.sawTerminal = true; continue; }
+                if ("[DONE]".equals(payload)) { req.sawTerminal = true; return; }
 
                 Map<String, Object> ev;
                 try {
@@ -525,6 +606,10 @@ public final class Llm {
                         if (parts instanceof java.util.List<?> pl) {
                             for (Object pobj : pl) {
                                 if (pobj instanceof Map<?, ?> pm) {
+                                    // Thought summaries are optional provider
+                                    // diagnostics, not the story page. Keep
+                                    // them out even if a proxy enables them.
+                                    if (Boolean.TRUE.equals(pm.get("thought"))) continue;
                                     String t = JsonParse.str(pm, "text", "");
                                     if (!t.isEmpty()) append(req, t);
                                 }
@@ -596,15 +681,21 @@ public final class Llm {
                         }
                     }
                 }
+                // A terminal event freezes the page. Do not permit a broken or
+                // hostile server to append another content event afterwards.
+                if (req.sawTerminal) return;
             }
         }
     }
 
     private static void readSseAnthropic(Req req, InputStream in) throws Exception {
+        int badEvents = 0;
         try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
                      "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
              BufferedReader r = new BufferedReader(
-                     new InputStreamReader(limited, StandardCharsets.UTF_8))) {
+                     new InputStreamReader(limited, StandardCharsets.UTF_8.newDecoder()
+                             .onMalformedInput(CodingErrorAction.REPORT)
+                             .onUnmappableCharacter(CodingErrorAction.REPORT)))) {
             String line;
             while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
                 if (req.cancelled.get()) {
@@ -619,6 +710,12 @@ public final class Llm {
                 try {
                     ev = JsonParse.parseObject(payload);
                 } catch (Throwable t) {
+                    if (++badEvents > MAX_BAD_EVENTS) {
+                        req.failKind = "protocol";
+                        fail(req, "the provider sent " + badEvents
+                                + " unreadable events; giving up on this page");
+                        return;
+                    }
                     Config.log("skipped unparseable SSE payload (" + payload.length() + " bytes)");
                     continue;
                 }
@@ -684,6 +781,7 @@ public final class Llm {
                     }
                     default -> { /* ping, content_block_start/stop */ }
                 }
+                if (req.sawTerminal) return;
             }
         }
     }
@@ -726,6 +824,7 @@ public final class Llm {
 
     /** A checked failure used for every provider-controlled size ceiling. */
     private static final class ResponseTooLarge extends IOException {
+        private static final long serialVersionUID = 1L;
         ResponseTooLarge(String message) { super(message); }
     }
 
@@ -809,7 +908,7 @@ public final class Llm {
     private static void fail(Req req, String msg) {
         synchronized (LOCK) {
             if (active != req || req.isTerminal()) return;  // cancelled or done
-            req.error = msg;
+            req.error = Config.safeForDisplay(msg);
             req.status[0] = Status.ERROR;
         }
         Config.log("ERROR " + msg);
@@ -827,7 +926,10 @@ public final class Llm {
     private static void finish(Req req) {
         if (req.isTerminal()) return;
         if (req.sawTerminal && req.full.length() > 0) {
-            req.status[0] = Status.DONE;
+            // A complete network response is not a completed page. The worker
+            // still has to validate and durably commit it before Lua may see
+            // DONE and permit another request.
+            req.status[0] = Status.RECEIVED;
             return;
         }
         req.status[0] = Status.ERROR;
@@ -991,12 +1093,14 @@ public final class Llm {
         j.endArr();
 
         j.objKey("generationConfig");
-        j.put("maxOutputTokens", Math.min(p.maxTokens, ceiling()));
+        int visible = Math.min(p.maxTokens, ceiling());
+        j.put("maxOutputTokens", Math.min(32000, visible + p.thinkingTokens));
         // Thinking models spend the output budget on reasoning before they
         // write a word. With a 520-token ceiling that can return an EMPTY
         // page, which looks like a broken adapter rather than a setting.
         j.objKey("thinkingConfig");
-        j.put("thinkingBudget", 0);
+        j.put("thinkingBudget", p.thinkingTokens);
+        j.put("includeThoughts", false);
         j.endObj();
         j.endObj();
 
@@ -1007,7 +1111,7 @@ public final class Llm {
         Json j = new Json().obj();
         j.put("model", p.model);
         j.put("stream", true);
-        j.put("max_tokens", Math.min(p.maxTokens, ceiling()));
+        j.put(p.openAiTokenField, Math.min(p.maxTokens, ceiling()));
 
         j.arrKey("messages");
         if (nativeSystem(p)) {
@@ -1022,12 +1126,13 @@ public final class Llm {
         j.endObj();
         j.endArr();
 
-        // Ask for usage on the final chunk. Servers that do not know this
-        // option ignore it, which is exactly what the compatibility layer
-        // promises to do with anything it does not recognise.
-        j.objKey("stream_options");
-        j.put("include_usage", true);
-        j.endObj();
+        // Ask for usage only when the profile opts in. Several otherwise
+        // compatible local servers reject unknown stream_options with HTTP 400.
+        if (p.streamUsage) {
+            j.objKey("stream_options");
+            j.put("include_usage", true);
+            j.endObj();
+        }
 
         return j.endObj().toString();
     }

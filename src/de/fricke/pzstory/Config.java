@@ -46,6 +46,10 @@ public final class Config {
         public final int thinkingTokens;
         public final String systemMode;  // native | prepend_to_user | both
         public final String cacheTtl;    // "1h" | "5m" | "off"
+        /** OpenAI-compatible servers vary: opt in only when supported. */
+        public final boolean streamUsage;
+        /** max_tokens for compatibility, max_completion_tokens for newer APIs. */
+        public final String openAiTokenField;
 
         Profile(String name, Map<String, Object> m) {
             this.name = name;
@@ -75,6 +79,9 @@ public final class Config {
             // default would miss between most of them. Cache writes cost 2x,
             // reads are a fraction of base - so a hit pays for several misses.
             this.cacheTtl = JsonParse.str(m, "cacheTtl", "1h");
+            this.streamUsage = bool(m, "streamUsage", false);
+            this.openAiTokenField = JsonParse.str(
+                    m, "openAiTokenField", "max_tokens");
 
             requireLength("profile name", name, 1, 64);
             requireOneOf("kind", kind, "anthropic", "openai-compatible", "gemini");
@@ -83,6 +90,8 @@ public final class Config {
             if (baseUrl != null) requireLength("baseUrl", baseUrl, 1, Endpoint.MAX_URL_CHARS);
             requireOneOf("systemMode", systemMode, "native", "prepend_to_user", "both");
             requireOneOf("cacheTtl", cacheTtl, "1h", "5m", "off");
+            requireOneOf("openAiTokenField", openAiTokenField,
+                    "max_tokens", "max_completion_tokens");
         }
 
         /** True when this profile could actually be used for a call. */
@@ -120,6 +129,13 @@ public final class Config {
     private static void requireOneOf(String field, String value, String... allowed) {
         for (String candidate : allowed) if (candidate.equals(value)) return;
         throw new IllegalArgumentException("unsupported " + field + " value");
+    }
+
+    private static boolean bool(Map<String, Object> values, String key, boolean fallback) {
+        Object value = values.get(key);
+        if (value instanceof Boolean b) return b;
+        if (value instanceof String s) return Boolean.parseBoolean(s);
+        return fallback;
     }
 
     public static Path file() {
@@ -261,6 +277,35 @@ public final class Config {
     /** Every log line from the mod goes through here. */
     public static void log(String msg) {
         System.out.println("[PZStory] " + safeForLog(msg));
+    }
+
+    /**
+     * A bounded diagnostic safe to return across the Lua bridge. Provider
+     * errors can echo credentials and terminal control characters; the device
+     * should never display either even though it is not a conventional log.
+     */
+    public static String safeForDisplay(String text) {
+        String raw = redact(String.valueOf(text));
+        final int max = 800;
+        final String marker = "...[truncated]";
+        StringBuilder out = new StringBuilder(Math.min(raw.length(), max));
+        int i = 0;
+        for (; i < raw.length() && out.length() < max; i++) {
+            char c = raw.charAt(i);
+            if (c == '\n' || c == '\r' || c == '\t') {
+                out.append(' ');
+            } else if (c >= 0x20 && c != 0x7f) {
+                out.append(c);
+            }
+        }
+        if (i < raw.length()) {
+            int end = Math.max(0, max - marker.length());
+            if (end > 0 && end <= out.length()
+                    && Character.isHighSurrogate(out.charAt(end - 1))) end--;
+            out.setLength(end);
+            out.append(marker);
+        }
+        return out.toString().strip();
     }
 
     /**

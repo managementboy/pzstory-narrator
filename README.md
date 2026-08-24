@@ -46,8 +46,9 @@ Read live from the running game, every time you press WRITE:
 - **The dead** — counted directly and reported in bands, plus the ones already
   down nearby
 - **Noise** — every active world sound, so an alarm going off is the page
-- **The room** — furniture by type, items in plain sight, windows, doors,
-  curtains, bodies. Never the inside of a closed container
+- **The room** — furniture and floor items on squares currently visible from
+  the survivor's position, plus windows, doors, curtains and bodies. Never an
+  unseen corner or the inside of a closed container
 - **Vehicles** — make and model, seat, engine, fuel, condition
 - **Utilities** — whether the power and water are still on, and roughly how
   long they have left
@@ -75,9 +76,18 @@ photograph; the delta is what the page is actually about.
 Keys live in `Zomboid/pzstory/profiles.json`, which is **outside this repo and
 outside your save**. They are never logged, never written into a page, and
 never sent anywhere except the provider you configured. See
-[`docs/API_KEY_ANTHROPIC.md`](docs/API_KEY_ANTHROPIC.md).
+[`docs/PROVIDERS.md`](docs/PROVIDERS.md) for complete profile examples and
+[`docs/API_KEY_ANTHROPIC.md`](docs/API_KEY_ANTHROPIC.md) for key setup.
 
 A local model through Ollama needs no key and no account.
+
+Before a request leaves the game, its live-state block is minimised: account
+name, exact coordinates, engine ids, diagnostic errors, raw health/stat
+telemetry and exact skill XP are removed. Narrative facts such as pronouns,
+room name, visible objects, injuries and broad ability remain. Campaign pages,
+canon, player notes, sandbox rules and the narrator prompt are still sent
+because they are necessary to continue the story. A local provider keeps all
+of that on the same machine.
 
 ## Install
 
@@ -95,12 +105,16 @@ No Gradle, no downloads, no daemon:
 PZ=/path/to/ProjectZomboid ./build.sh
 ```
 
+On a source or release-candidate branch, rebuild before copying `mod/42/` into
+the game. The Lua bridge intentionally refuses an older committed JAR instead
+of silently running without the branch's safety fixes.
+
 The build is **deterministic for the same JDK and game-library toolchain** —
 sorted inputs and a pinned timestamp — so two builds of the same source produce
 a byte-identical jar and you can check the committed binary against your own.
 Set `SOURCE_DATE_EPOCH` to pin a different stamp. It ends by running
-`tools/verify.sh`, which refuses to ship a jar whose
-version disagrees with `mod.info` or the Lua.
+`tools/verify.sh`, which refuses to ship a jar whose version disagrees with
+`mod.info` or the Lua, or which omits any source class.
 
 You need **JDK 25 or newer** — Project Zomboid 42.20.3 compiles its own classes
 to bytecode major 69, so an older compiler cannot read them. Edit the `LIB`
@@ -124,11 +138,13 @@ shipping the source beside it.
 
 ### Versions
 
-Two numbers, because they answer different questions. **Release** (`1.24.0`) is
-for people and changes whenever anything ships. **Bridge API** (`3`) changes
-only when the Java surface Lua calls actually changes, and Lua compares it for
-exact equality — so a cosmetic release no longer forces a firmware mismatch,
-and an incompatible pairing can no longer load. Both live in
+Two numbers, because they answer different questions. **Release**
+(`1.25.0-rc1`) is for people and changes whenever anything ships. **Bridge
+API** (`4`) changes
+when production Lua depends on a new Java method, payload, status or semantic,
+and Lua compares it for exact equality — so a cosmetic release no longer
+forces a firmware mismatch, and an incompatible pairing can no longer load.
+Both live in
 `src/de/fricke/pzstory/Version.java` and are verified at build time.
 
 > **Java only reloads when Project Zomboid restarts.** Lua reloads when a save
@@ -148,9 +164,10 @@ tools/        test.sh (unit tests) and verify.sh (release integrity)
 build.sh      javac + jar, then verify
 ```
 
-`dev/PZStory_Probe.lua` adds F9 (dump a state snapshot to the console) and F10
-(self-test the Java bridge). Drop it in beside `PZStoryBook.lua` if you are
-working on the mod; leave it out if you are playing.
+`dev/PZStory_Probe.lua` adds F9 (dump the provider-facing live-state projection
+to the console) and F10 (self-test the Java bridge). Drop it in beside
+`PZStoryBook.lua` if you are working on the mod; leave it out if you are
+playing.
 
 ## Tests
 
@@ -160,8 +177,12 @@ working on the mod; leave it out if you are playing.
 ./tools/rebuild-and-compare.sh # rebuild and byte-compare the release jar
 ```
 
-Both run in CI. Anything that touches `zombie.*` cannot be unit-tested without
-the proprietary jars and is verified in-game instead — see `dev/README.md`.
+The first two run in CI. Anything that touches `zombie.*` cannot be unit-tested
+without the proprietary jars and is verified in-game instead — see
+`dev/README.md`.
+
+For a disposable-save checklist covering rebuild, install, privacy inspection,
+cancellation and cross-save tests, see [`docs/LIVE_TESTING.md`](docs/LIVE_TESTING.md).
 
 ## Licence
 

@@ -3,6 +3,8 @@ package de.fricke.pzstory;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,7 +36,11 @@ public final class BoundedFiles {
                 }
                 out.write(buf, 0, n);
             }
-            return out.toString(StandardCharsets.UTF_8);
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(out.toByteArray()))
+                    .toString();
         }
     }
 }

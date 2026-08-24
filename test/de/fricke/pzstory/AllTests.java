@@ -5,8 +5,13 @@ public final class AllTests {
     public static void main(String[] args) {
         System.out.println("PZStory test suite");
         JsonParseTest.run();
+        PageResultTest.run();
+        NarrativeStateTest.run();
+        DeltaTest.run();
+        CampaignTest.run();
         FileSafetyTest.run();
         EndpointTest.run();
+        ProviderCompatibilityTest.run();
         BridgeContractTest.run();
         VersionTest.run();
         System.exit(T.report());

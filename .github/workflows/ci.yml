@@ -28,10 +28,6 @@ jobs:
       - name: Unit tests
         run: ./tools/test.sh
 
-      # Version integrity, jar contents, secret scan.
-      - name: Release verification
-        run: ./tools/verify.sh
-
       - name: Shell syntax
         run: for f in build.sh tools/*.sh; do bash -n "$f"; done
 
@@ -46,3 +42,9 @@ jobs:
           if git grep -nI ' $' -- '*.java' '*.lua' '*.sh' '*.md'; then
             echo "trailing whitespace above"; exit 1
           fi
+
+      # Keep the binary gate last so source, shell and Lua diagnostics still
+      # run on source-only integration branches. The job remains red until the
+      # committed JAR is rebuilt from the exact checkout.
+      - name: Release verification
+        run: ./tools/verify.sh

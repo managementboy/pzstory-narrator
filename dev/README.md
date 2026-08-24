@@ -7,9 +7,10 @@ working on the mod.
 
 Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get two keys:
 
-- **F9** — dump the complete state snapshot to `console.txt`. This is the
-  fastest way to answer "what did the narrator actually see?", which is the
-  question behind almost every bad page.
+- **F9** — dump the minimised, provider-facing live-state block to
+  `console.txt`. This is the fastest way to answer "what did the narrator
+  actually see?" without logging exact coordinates, account names or raw
+  diagnostics. It still contains private story facts; review it before sharing.
 - **F10** — self-test the Java bridge and print the loaded JAR version.
 
 Left out of the shipped mod because a player does not need two debug keybinds,
@@ -28,10 +29,10 @@ what is still open.
 
 **Lua reloads when a save loads. Java only reloads when Project Zomboid
 restarts.** During development the two will silently drift and you will debug a
-prompt that is already fixed. The device guards against it — `NEEDS_JAVA` in
-`PZStoryBook.lua` must match `Main.VERSION`, and a mismatch shows a FIRMWARE
-MISMATCH page instead of throwing once a frame — but you still have to
-remember to bump both.
+prompt that is already fixed. The device guards against it — `NEEDS_API` in
+`PZStoryBook.lua` must match `Version.API`, and a mismatch shows a FIRMWARE
+MISMATCH page instead of throwing once a frame. Release metadata is checked
+separately by `tools/verify.sh`.
 
 ## Verify, don't recall
 

@@ -39,18 +39,16 @@ public final class Delta {
      * says.
      */
     public static boolean stillStanding(String beforeJson, String afterJson) {
-        if (beforeJson == null || beforeJson.isBlank()) return true;  // opening page
+        if (beforeJson == null || beforeJson.isBlank()) return false; // no previous page
         try {
             Map<String, Object> a = JsonParse.parseObject(beforeJson);
             Map<String, Object> b = JsonParse.parseObject(afterJson);
             Map<String, Object> pa = JsonParse.map(a, "position"), pb = JsonParse.map(b, "position");
             if (pa == null || pb == null) return false;
-            if (JsonParse.num(pa, "z", 0) != JsonParse.num(pb, "z", 0)) return false;
-            String ra = JsonParse.str(pa, "room", null), rb = JsonParse.str(pb, "room", null);
-            if (ra != null ? !ra.equals(rb) : rb != null) return false;
+            if (!sameRoom(pa, pb)) return false;
             int dx = JsonParse.num(pb, "x", 0) - JsonParse.num(pa, "x", 0);
             int dy = JsonParse.num(pb, "y", 0) - JsonParse.num(pa, "y", 0);
-            return Math.sqrt((double) dx * dx + (double) dy * dy) < 3;
+            return dx == 0 && dy == 0;
         } catch (Throwable t) {
             return false;
         }
@@ -127,9 +125,11 @@ public final class Delta {
         double ha = dbl(ta, "worldAgeHours"), hb = dbl(tb, "worldAgeHours");
         double d = hb - ha;
         if (d <= 0.02) return;
-        if (d < 1) out.add(Math.round(d * 60) + " minutes have passed.");
-        else if (d < 24) out.add(String.format("%.1f hours have passed.", d));
-        else out.add(String.format("%.1f days have passed.", d / 24.0));
+        if (d < 1) out.add("Less than an hour has passed.");
+        else if (d < 6) out.add("A few hours have passed.");
+        else if (d < 18) out.add("Much of a day has passed.");
+        else if (d < 36) out.add("About a day has passed.");
+        else out.add("Several days have passed.");
     }
 
     private static void place(Map<String, Object> a, Map<String, Object> b,
@@ -141,7 +141,7 @@ public final class Delta {
         int dist = (int) Math.round(Math.sqrt((double) dx * dx + (double) dy * dy));
 
         String ra = JsonParse.str(pa, "room", null), rb = JsonParse.str(pb, "room", null);
-        boolean roomChanged = ra != null ? !ra.equals(rb) : rb != null;
+        boolean roomChanged = !sameRoom(pa, pb);
 
         // Stairs. Two tiles sideways and a whole floor is not "has not moved",
         // and it is worth a line of its own - climbing is effort, and the sound
@@ -155,13 +155,13 @@ public final class Delta {
 
         // Screen directions only: the view is isometric, so a compass bearing
         // would be meaningless to the player reading the page.
-        if (dist >= 3) {
+        if (dist > 0) {
             String across = dx - dy > 0 ? "right" : "left";
             String updown = dx + dy > 0 ? "down" : "up";
             String how = dist < 15 ? "a short way" : dist < 120 ? "some distance"
                        : dist < 500 ? "a few streets" : "right across town";
-            out.add("The survivor has moved " + how + " (" + dist + " paces, "
-                    + across + " and " + updown + " on screen).");
+            out.add("The survivor has moved " + how + ", " + across + " and "
+                    + updown + " on screen.");
         } else if (!roomChanged && zb == za) {
             cautions.add("The survivor has NOT moved. Do not write them walking "
                     + "anywhere, and do not describe the room again.");
@@ -193,11 +193,10 @@ public final class Delta {
                 xpA = dbl(na, "xp");
             }
             if (lvlB > lvlA) {
-                out.add("**" + e.getKey() + " has gone up to level " + lvlB
-                        + "** - they are measurably better at this than they were.");
+                out.add("**" + e.getKey() + " has noticeably improved** - they "
+                        + "are measurably better at this than they were.");
             } else if (xpB - xpA > 1) {
-                out.add(e.getKey() + " has improved (" + Math.round(xpB - xpA)
-                        + " points of practice).");
+                out.add(e.getKey() + " has gained meaningful practice.");
             }
         }
     }
@@ -206,18 +205,30 @@ public final class Delta {
         Object da = a.get("theDead"), db = b.get("theDead");
         boolean was = da instanceof Map<?, ?>, now = db instanceof Map<?, ?>;
         if (!was && now) {
-            out.add("**They are here now** - " + JsonParse.str(db, "withinSight", "some")
-                    + " within sight, where a moment ago there were none.");
+            String sight = JsonParse.str(db, "withinSight", "");
+            if (sight.isEmpty() && pursuing(db)) {
+                out.add("**The dead are pursuing them now**, even if none is "
+                        + "currently in sight.");
+            } else {
+                out.add("**They are here now** - " + (sight.isEmpty() ? "some" : sight)
+                        + " within sight, where a moment ago there were none.");
+            }
         } else if (was && !now) {
             out.add("The dead that were in sight are gone. It is quiet again.");
         } else if (was && now) {
             String x = JsonParse.str(da, "withinSight", ""), y = JsonParse.str(db, "withinSight", "");
             if (!x.equals(y)) out.add("The number outside has changed: " + x + " -> " + y + ".");
-            boolean chasedBefore = da instanceof Map<?, ?> m1 && m1.containsKey("comingForHer");
-            boolean chasedNow = db instanceof Map<?, ?> m2 && m2.containsKey("comingForHer");
-            if (!chasedBefore && chasedNow) out.add("**They have noticed her.**");
-            if (chasedBefore && !chasedNow) out.add("Whatever was following has lost her.");
+            boolean chasedBefore = pursuing(da);
+            boolean chasedNow = pursuing(db);
+            if (!chasedBefore && chasedNow) out.add("**They have noticed the survivor.**");
+            if (chasedBefore && !chasedNow) out.add("Whatever was following has lost them.");
         }
+    }
+
+    /** Supports both the gender-neutral field and snapshots from older builds. */
+    private static boolean pursuing(Object dead) {
+        return dead instanceof Map<?, ?> map
+                && (map.containsKey("comingForThem") || map.containsKey("comingForHer"));
     }
 
     /** Getting into, or out of, a vehicle. In a road story this IS the plot. */
@@ -260,21 +271,30 @@ public final class Delta {
 
     private static void body(Map<String, Object> a, Map<String, Object> b, List<String> out) {
         Map<String, Object> ha = JsonParse.map(a, "health"), hb = JsonParse.map(b, "health");
-        if (hb == null) return;
-        double oa = ha == null ? 100 : dbl(ha, "overall"), ob = dbl(hb, "overall");
-        if (ob < oa - 1) out.add("They are hurt worse than they were.");
-        else if (ob > oa + 1) out.add("They have healed a little.");
+        if (hb != null) {
+            double oa = ha == null ? 100 : dbl(ha, "overall"), ob = dbl(hb, "overall");
+            if (ob < oa - 1) out.add("They are hurt worse than they were.");
+            else if (ob > oa + 1) out.add("They have healed a little.");
 
-        int wa = ha == null ? 0 : JsonParse.num(ha, "partsBitten", 0);
-        if (JsonParse.num(hb, "partsBitten", 0) > wa) out.add("**They have been BITTEN.**");
-        int sa = ha == null ? 0 : JsonParse.num(ha, "partsScratched", 0);
-        if (JsonParse.num(hb, "partsScratched", 0) > sa) out.add("They have been scratched.");
+            int wa = ha == null ? 0 : JsonParse.num(ha, "partsBitten", 0);
+            if (JsonParse.num(hb, "partsBitten", 0) > wa) {
+                out.add("**They have been BITTEN.**");
+            }
+            int sa = ha == null ? 0 : JsonParse.num(ha, "partsScratched", 0);
+            if (JsonParse.num(hb, "partsScratched", 0) > sa) {
+                out.add("They have been scratched.");
+            }
+        }
 
         Object ca = a.get("character"), cb = b.get("character");
         if (cb instanceof Map<?, ?>) {
             int ka = (ca instanceof Map<?, ?>) ? JsonParse.num(ca, "zombieKills", 0) : 0;
             int kb = JsonParse.num(cb, "zombieKills", 0);
-            if (kb > ka) out.add("They have killed " + (kb - ka) + " more of them.");
+            int gained = kb - ka;
+            if (gained > 0) {
+                out.add("They have killed " + (gained == 1 ? "one more"
+                        : gained <= 4 ? "a few more" : "several more") + " of them.");
+            }
         }
     }
 
@@ -316,9 +336,7 @@ public final class Delta {
     private static void shelter(Map<String, Object> a, Map<String, Object> b, List<String> out) {
         Map<String, Object> pa = JsonParse.map(a, "position"), pb = JsonParse.map(b, "position");
         if (pa == null || pb == null) return;
-        if (JsonParse.num(pa, "z", 0) != JsonParse.num(pb, "z", 0)) return;
-        String ra = JsonParse.str(pa, "room", null), rb = JsonParse.str(pb, "room", null);
-        if (ra == null || !ra.equals(rb)) return;
+        if (!sameRoom(pa, pb)) return;
 
         Map<String, Object> ha = JsonParse.map(a, "here"), hb = JsonParse.map(b, "here");
         if (ha == null || hb == null) return;
@@ -354,6 +372,26 @@ public final class Delta {
         if (bodB > bodA) out.add("**There is a body in here that was not here before.**");
     }
 
+    /** Room name alone is not identity: many houses contain duplicates. */
+    private static boolean sameRoom(Map<String, Object> a, Map<String, Object> b) {
+        if (JsonParse.num(a, "z", 0) != JsonParse.num(b, "z", 0)) return false;
+        String idA = JsonParse.str(a, "roomId", null);
+        String idB = JsonParse.str(b, "roomId", null);
+        if (idA != null && idB != null) return idA.equals(idB);
+
+        String nameA = JsonParse.str(a, "room", null);
+        String nameB = JsonParse.str(b, "room", null);
+        if (nameA != null ? !nameA.equals(nameB) : nameB != null) return false;
+
+        Map<String, Object> buildingA = JsonParse.map(a, "building");
+        Map<String, Object> buildingB = JsonParse.map(b, "building");
+        if ((buildingA == null) != (buildingB == null)) return false;
+        if (buildingA == null) return true;
+        if (!buildingA.containsKey("id") || !buildingB.containsKey("id")) return true;
+        return JsonParse.num(buildingA, "id", Integer.MIN_VALUE)
+                == JsonParse.num(buildingB, "id", Integer.MAX_VALUE);
+    }
+
     private static Boolean bool(Map<String, Object> m, String k) {
         Object o = m.get(k);
         return o instanceof Boolean b ? b : null;
@@ -370,31 +408,45 @@ public final class Delta {
      * to say which one happened, because the difference is the whole scene.
      */
     private static void things(Map<String, Object> a, Map<String, Object> b, List<String> out) {
-        Set<String> bagsBefore = bagNames(a), bagsAfter = bagNames(b);
+        // Snapshots written before 1.25.0 have no bag ids. On the first page
+        // after upgrading, comparing their legacy name/occurrence keys with
+        // the new id keys would report every existing bag as newly acquired.
+        // Use the legacy keys for both sides of that one transition; once both
+        // snapshots carry ids, exact identity takes over automatically.
+        boolean useStableBagIds = hasBagIds(a) && hasBagIds(b);
+        Set<String> bagsBefore = bagKeys(a, useStableBagIds);
+        Set<String> bagsAfter = bagKeys(b, useStableBagIds);
         List<String> newBags = new ArrayList<>();
         for (String s : bagsAfter) if (!bagsBefore.contains(s)) newBags.add(s);
 
         // Anything that arrived INSIDE a bag he has only just acquired was not
         // gathered by him and must not be written as though it was.
         Set<String> arrivedInside = new LinkedHashSet<>();
-        for (String bag : newBags) collect(contentsOf(b, bag), arrivedInside);
+        for (String bag : newBags) {
+            collect(contentsOf(b, bag, useStableBagIds), arrivedInside);
+        }
+        Set<String> newBagNames = new LinkedHashSet<>();
+        for (String bag : newBags) {
+            newBagNames.add(nameOfBag(b, bag, useStableBagIds));
+        }
 
         Set<String> before = items(a), after = items(b);
         List<String> gained = new ArrayList<>(), lost = new ArrayList<>();
         for (String s : after) {
             if (before.contains(s)) continue;
-            if (arrivedInside.contains(s) || newBags.contains(s)) continue;
+            if (arrivedInside.contains(s) || newBagNames.contains(s)) continue;
             gained.add(s);
         }
         for (String s : before) if (!after.contains(s)) lost.add(s);
 
         for (String bag : newBags) {
+            String bagName = nameOfBag(b, bag, useStableBagIds);
             List<String> inside = new ArrayList<>();
-            collect(contentsOf(b, bag), inside);
+            collect(contentsOf(b, bag, useStableBagIds), inside);
             if (inside.isEmpty()) {
-                out.add("They have picked up a " + bag + ", empty.");
+                out.add("They have picked up a " + bagName + ", empty.");
             } else {
-                out.add("They have picked up a " + bag + ". It was ALREADY FULL "
+                out.add("They have picked up a " + bagName + ". It was ALREADY FULL "
                         + "when they found it - " + join(inside, 8) + " - and "
                         + "none of that is theirs or was put there by them. "
                         + "Somebody else owned this. Do NOT write them packing "
@@ -406,28 +458,71 @@ public final class Delta {
         if (!lost.isEmpty())   out.add("No longer carried: " + join(lost, 6) + ".");
     }
 
-    private static Set<String> bagNames(Map<String, Object> m) {
+    private static boolean hasBagIds(Map<String, Object> m) {
+        if (m.get("bags") instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> bag
+                        && bag.get("id") instanceof String id && !id.isBlank()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static Set<String> bagKeys(Map<String, Object> m, boolean useStableIds) {
         Set<String> out = new LinkedHashSet<>();
+        Map<String, Integer> occurrences = new LinkedHashMap<>();
         if (m.get("bags") instanceof List<?> l) {
             for (Object o : l) {
                 if (o instanceof Map<?, ?> bag) {
-                    Object n = bag.get("name");
-                    if (n instanceof String s) out.add(s);
+                    String key = bagKey(bag, occurrences, useStableIds);
+                    if (key != null) out.add(key);
                 }
             }
         }
         return out;
     }
 
-    private static Object contentsOf(Map<String, Object> m, String bagName) {
+    private static Object contentsOf(Map<String, Object> m, String wantedKey,
+                                     boolean useStableIds) {
+        Map<String, Integer> occurrences = new LinkedHashMap<>();
         if (m.get("bags") instanceof List<?> l) {
             for (Object o : l) {
-                if (o instanceof Map<?, ?> bag && bagName.equals(bag.get("name"))) {
-                    return bag.get("contents");
+                if (o instanceof Map<?, ?> bag) {
+                    String key = bagKey(bag, occurrences, useStableIds);
+                    if (wantedKey.equals(key)) return bag.get("contents");
                 }
             }
         }
         return null;
+    }
+
+    private static String nameOfBag(Map<String, Object> m, String wantedKey,
+                                    boolean useStableIds) {
+        Map<String, Integer> occurrences = new LinkedHashMap<>();
+        if (m.get("bags") instanceof List<?> l) {
+            for (Object o : l) {
+                if (o instanceof Map<?, ?> bag) {
+                    String key = bagKey(bag, occurrences, useStableIds);
+                    if (wantedKey.equals(key) && bag.get("name") instanceof String name) {
+                        return name;
+                    }
+                }
+            }
+        }
+        return "bag";
+    }
+
+    /** Stable engine id where available; occurrence key for old snapshots. */
+    private static String bagKey(Map<?, ?> bag, Map<String, Integer> occurrences,
+                                 boolean useStableIds) {
+        if (useStableIds && bag.get("id") instanceof String id && !id.isBlank()) {
+            return "id:" + id;
+        }
+        if (!(bag.get("name") instanceof String name)) return null;
+        int occurrence = occurrences.merge(name, 1, Integer::sum);
+        return "name:" + name + "#" + occurrence;
     }
 
     private static void collect(Object arr, List<String> into) {
@@ -473,7 +568,7 @@ public final class Delta {
         return o instanceof Double d ? d : 0.0;
     }
 
-    /** Trimmed copy of a snapshot, small enough to keep between pages. */
+    /** Trimmed copy of a valid snapshot, or null when it cannot be parsed. */
     public static String keep(String snapshot) {
         try {
             Map<String, Object> m = JsonParse.parseObject(snapshot);
@@ -485,7 +580,11 @@ public final class Delta {
             }
             return Json.of(keep);
         } catch (Throwable t) {
-            return snapshot;
+            // Returning the malformed input would let Campaign wrap it in a
+            // JSON string and persist an invalid surrogate or other poisoned
+            // state as the continuity checkpoint. Invalid state is not a
+            // checkpoint; the whole page transaction must be refused.
+            return null;
         }
     }
 }
