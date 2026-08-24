@@ -2062,6 +2062,22 @@ Events.OnSeeNewRoom.Add(function(room)
     end)
 end)
 
+-- Polling remains the correctness baseline, but these supported Build 42
+-- callbacks close the five-second blind spot around short-lived transitions.
+-- They merely request an immediate factual snapshot; no callback fabricates a
+-- story event and none can contact a provider.
+local function observeTransient()
+    local f = api("observeNow")
+    if f then pcall(f) end
+end
+
+if Events.OnZombieDead then Events.OnZombieDead.Add(observeTransient) end
+if Events.OnExitVehicle then Events.OnExitVehicle.Add(observeTransient) end
+if Events.OnUseVehicle then Events.OnUseVehicle.Add(observeTransient) end
+if Events.OnPlayerAttackFinished then
+    Events.OnPlayerAttackFinished.Add(observeTransient)
+end
+
 -- The campaign store lives inside the save folder, so it must be re-pointed
 -- every time a save loads. Without this, loading a second save would keep
 -- showing the first one's book.

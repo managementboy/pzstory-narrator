@@ -79,7 +79,9 @@ public final class EventDetector {
         if (gained <= 0) return;
         String scale = gained == 1 ? "one" : gained <= 4 ? "a few" : "several";
         String summary = "They killed " + scale + " of the dead.";
-        int importance = oldKills == 0 ? 72 : gained >= 5 ? 62 : gained > 1 ? 52 : 42;
+        // A kill must outrank ambient noise. Live alpha testing showed a
+        // repeated generic sound (82) displacing a kill (42) from the page.
+        int importance = oldKills == 0 ? 88 : gained >= 5 ? 84 : gained > 1 ? 80 : 76;
         add(out, StoryEvent.KILL, stamp, place, summary, importance,
                 Map.of("scale", scale, "first_kill", oldKills == 0 ? "yes" : "no"));
     }
@@ -218,11 +220,11 @@ public final class EventDetector {
         if (a == null && b != null) {
             String what = safeLabel(JsonParse.str(b, "what", "a loud noise"), "a loud noise");
             add(out, StoryEvent.NOISE_STARTED, stamp, place,
-                    what + " began nearby.", 82, Map.of("sound", what));
+                    what + " began nearby.", 34, Map.of("sound", what));
         } else if (a != null && b == null) {
             String what = safeLabel(JsonParse.str(a, "what", "the noise"), "the noise");
             add(out, StoryEvent.NOISE_STOPPED, stamp, place,
-                    what + " stopped, leaving the consequences behind.", 35,
+                    what + " stopped.", 12,
                     Map.of("sound", what));
         } else if (a != null) {
             String oldSound = JsonParse.str(a, "what", "");
@@ -230,7 +232,7 @@ public final class EventDetector {
             if (!newSound.isBlank() && !newSound.equals(oldSound)) {
                 add(out, StoryEvent.NOISE_STARTED, stamp, place,
                         safeLabel(newSound, "A different noise") + " replaced the earlier noise.",
-                        68, Map.of("sound", safeLabel(newSound, "a different noise")));
+                        38, Map.of("sound", safeLabel(newSound, "a different noise")));
             }
         }
     }

@@ -5,7 +5,7 @@
   F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
   F11 - dump the local event journal (contains local ids)
-  F12 - dump structured place memory (contains local ids)
+  F6  - dump structured place memory (contains local ids)
 
   There is still no UI. The point of this file is to prove the whole chain
   end to end - key, network, SSE parsing, background thread, per-frame drain -
@@ -42,7 +42,7 @@ table.insert(keyBinding, { value = OVERLAY_BIND,  key = Keyboard.KEY_F8 })
 table.insert(keyBinding, { value = SNAPSHOT_BIND, key = Keyboard.KEY_F9 })
 table.insert(keyBinding, { value = TEST_BIND,     key = Keyboard.KEY_F10 })
 table.insert(keyBinding, { value = EVENTS_BIND,   key = Keyboard.KEY_F11 })
-table.insert(keyBinding, { value = MEMORY_BIND,   key = Keyboard.KEY_F12 })
+table.insert(keyBinding, { value = MEMORY_BIND,   key = Keyboard.KEY_F6 })
 
 -- ---------------------------------------------------------------- snapshot
 
@@ -172,7 +172,7 @@ end
 -- ------------------------------------------------------- Testing Mode UI
 
 -- This overlay is deliberately implemented in the local probe, not in the
--- production device. It reads the same on-disk diagnostics as F11/F12, never
+-- production device. It reads the same on-disk diagnostics as F11/F6, never
 -- starts a provider request, and never displays raw room ids or coordinates.
 local overlay = {
     visible = false,
@@ -230,8 +230,9 @@ local function refreshOverlay()
                 table.insert(overlay.events, {
                     kind = tostring(event.type or "event"):gsub("_", " "):upper(),
                     importance = tonumber(event.importance) or 0,
+                    stamp = tostring(event.stamp or ""),
                 })
-                if #overlay.events >= 4 then break end
+                if #overlay.events >= 8 then break end
             end
         end
     end
@@ -289,8 +290,9 @@ local function drawOverlay()
         for _, event in ipairs(overlay.events) do
             local r, g, b = 1, 0.85, 0.3
             if event.importance >= 75 then r, g, b = 1, 0.3, 0.25 end
+            local at = event.stamp ~= "" and (event.stamp .. "  ") or ""
             shadowText(UIFont.Small, x, y,
-                event.kind .. "  [" .. event.importance .. "]", r, g, b, false)
+                at .. event.kind .. "  [" .. event.importance .. "]", r, g, b, false)
             y = y + 17
         end
     end

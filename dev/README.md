@@ -14,11 +14,11 @@ Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get four keys:
 - **F10** — self-test the Java bridge and print the loaded JAR version.
 - **F11** — dump the 2.0 local event journal. This contains stable local ids;
   it is never provider input and should be treated as private.
-- **F12** — dump structured place memory, including the local identities used
+- **F6** — dump structured place memory, including the local identities used
   to distinguish same-named rooms.
 
 Left out of the shipped mod because a player does not need four debug keybinds,
-and F9-F12 collide with other mods.
+and function keys collide with other mods or screenshot overlays.
 
 ## `context-audit.html`
 

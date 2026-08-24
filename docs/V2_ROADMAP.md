@@ -21,7 +21,7 @@ Implemented:
 - `campaign.json` schema 1 to schema 2 migration.
 - Structured place identity, return visits and privacy-safe memory projection.
 - Local diagnostics through `eventJournal()`, `worldMemory()` and the optional
-  F11/F12 development probe.
+  F11/F6 development probe and the F8 Testing Mode overlay.
 
 Remaining before this milestone is promoted from alpha:
 

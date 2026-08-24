@@ -92,6 +92,16 @@ public class StoryAPI {
         }
     }
 
+    /**
+     * Supported Build 42 callbacks call this after a transient action. It
+     * samples the same bounded local state immediately; it does not invent an
+     * event and never starts a provider request.
+     */
+    public static void observeNow() {
+        nextObservationNanos = 0;
+        observeWorld();
+    }
+
     /** Local-only diagnostics; includes event ids and must not be sent remotely. */
     public static String eventJournal() {
         return Campaign.eventsJson();

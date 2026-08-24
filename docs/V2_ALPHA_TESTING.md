@@ -49,9 +49,9 @@ Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
 - F9: provider-facing state, with privacy minimisation.
 - F10: provider connectivity test.
 - F11: local event journal.
-- F12: local world memory.
+- F6: local world memory (moved from F12 to avoid common screenshot overlays).
 
-F11 and F12 intentionally contain local stable ids and must not appear in the
+F11 and F6 intentionally contain local stable ids and must not appear in the
 provider payload or generated page. They are debugging data; review them before
 sharing `console.txt`.
 

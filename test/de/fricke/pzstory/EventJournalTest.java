@@ -20,6 +20,9 @@ public final class EventJournalTest {
                 "1993-07-11 09:15");
         T.ok("room transition recorded", has(detected, StoryEvent.PLACE_CHANGED));
         T.ok("first kill recorded", has(detected, StoryEvent.KILL));
+        T.ok("a kill outranks ambient noise",
+                importance(detected, StoryEvent.KILL)
+                        > importance(detected, StoryEvent.NOISE_STARTED));
         T.ok("bite outranks everything", importance(detected, StoryEvent.BITTEN) == 100);
         T.ok("power failure recorded", has(detected, StoryEvent.POWER_LOST));
         T.ok("pursuit recorded", has(detected, StoryEvent.PURSUIT_STARTED));
@@ -105,6 +108,7 @@ public final class EventJournalTest {
                  "health":{"overall":82,"partsBitten":1,"partsScratched":0,
                            "partsBleeding":1},
                  "utilities":{"mainsPower":false,"mainsWater":true},
+                 "noise":{"what":"a noise close by"},
                  "theDead":{"comingForThem":"one or two"},
                  "skills":{"Carpentry":{"level":2}},
                  "weather":{"light":"bright"}}

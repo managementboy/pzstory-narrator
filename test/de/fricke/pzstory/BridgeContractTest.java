@@ -69,6 +69,11 @@ public final class BridgeContractTest {
                 api.contains("StateReader.eventSnapshot()")
                         && !method(api, "public static void observeWorld()")
                                 .contains("Llm.start"));
+        T.ok("supported transient callbacks force a factual sample",
+                api.contains("void observeNow()")
+                        && lua.contains("Events.OnZombieDead")
+                        && lua.contains("Events.OnPlayerAttackFinished")
+                        && lua.contains("api(\"observeNow\")"));
         T.ok("request captures pending events before provider start",
                 api.contains("EventJournal.Capture capturedEvents")
                         && api.contains("capturedEvents.ids"));
