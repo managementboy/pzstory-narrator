@@ -102,6 +102,23 @@ public class StoryAPI {
         observeWorld();
     }
 
+    /** Records only allow-listed actions after a supported completion hook. */
+    public static boolean recordAction(String action, String detail) {
+        ActionEventPolicy.Result event = ActionEventPolicy.resolve(action, detail);
+        if (event == null) return false;
+        try {
+            String state = StateReader.eventSnapshot();
+            PlaceRef place = PlaceRef.fromState(JsonParse.parseObject(state));
+            return Campaign.recordEvent(event.type(), event.summary(),
+                    event.importance(), stamp(),
+                    place == null ? "" : place.id,
+                    place == null ? "" : place.label, "game");
+        } catch (Throwable t) {
+            Config.log("action event skipped: " + t.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     /** Local-only diagnostics; includes event ids and must not be sent remotely. */
     public static String eventJournal() {
         return Campaign.eventsJson();

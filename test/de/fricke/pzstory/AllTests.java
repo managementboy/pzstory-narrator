@@ -9,6 +9,7 @@ public final class AllTests {
         NarrativeStateTest.run();
         PromptFreshStartTest.run();
         DeltaTest.run();
+        ActionEventPolicyTest.run();
         EventJournalTest.run();
         WorldMemoryTest.run();
         CampaignEventTest.run();

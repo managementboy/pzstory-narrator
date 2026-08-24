@@ -75,7 +75,7 @@ remain local; providers receive only human-readable labels and qualitative
 familiarity. Existing schema-1 campaigns migrate on their next successful
 write.
 
-This is `2.0.0-alpha.1`, the first foundation milestone—not the completed 2.0
+This is `2.0.0-alpha.2`, the first foundation milestone—not the completed 2.0
 feature set. Campaign Director mode, grounded objectives, character memory,
 the PDA timeline and opt-in world artifacts are tracked in
 [`docs/V2_ROADMAP.md`](docs/V2_ROADMAP.md). Use a copied save and follow
@@ -162,7 +162,7 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`2.0.0-alpha.1`) is for people and changes whenever anything ships. **Bridge
+(`2.0.0-alpha.2`) is for people and changes whenever anything ships. **Bridge
 API** (`5`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer
@@ -187,7 +187,8 @@ tools/        test.sh (unit tests) and verify.sh (release integrity)
 build.sh      javac + jar, then verify
 ```
 
-`dev/PZStory_Probe.lua` adds F9 (provider-facing live-state projection), F10
+`dev/PZStory_Probe.lua` adds F8/F5 (Testing Mode and Event Inbox), F9
+(provider-facing live-state projection), F10
 (Java bridge self-test), F11 (local event journal) and F12 (local world memory).
 Drop it in beside `PZStoryBook.lua` if you are working on the mod; leave it out
 if you are playing. F11/F12 contain local stable ids and should be treated as

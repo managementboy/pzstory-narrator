@@ -35,6 +35,27 @@ public final class EventJournalTest {
                 has(EventDetector.between(shelter(10, 0), shelter(10, 1),
                         "1993-07-11 09:18"), StoryEvent.WINDOW_BROKEN));
 
+        T.group("Event detector - carried item changes");
+        List<StoryEvent.Draft> acquired = EventDetector.between(
+                inventory("Hammer", 1, "Bandage", 2),
+                inventory("Hammer", 2, "Bandage", 2),
+                "1993-07-11 09:19");
+        T.ok("a newly carried item is recorded",
+                has(acquired, StoryEvent.ITEM_ACQUIRED));
+        T.ok("acquired quantity is factual",
+                summary(acquired, StoryEvent.ITEM_ACQUIRED)
+                        .equals("They acquired Hammer."));
+        T.ok("unchanged carried multiset makes no event",
+                EventDetector.between(inventory("Hammer", 1, "Bandage", 2),
+                        inventory("Bandage", 2, "Hammer", 1),
+                        "1993-07-11 09:20").isEmpty());
+        String manyBefore = "{\"carriedItems\":{}}";
+        String manyAfter = "{\"carriedItems\":{" +
+                "\"A\":1,\"B\":1,\"C\":1,\"D\":1,\"E\":1,\"F\":1}}";
+        T.eq("one sample emits at most four acquired-item events", 4,
+                count(EventDetector.between(manyBefore, manyAfter,
+                        "1993-07-11 09:21"), StoryEvent.ITEM_ACQUIRED));
+
         T.group("Event journal - capture and acknowledgement");
         EventJournal journal = new EventJournal();
         for (StoryEvent.Draft draft : detected) journal.record(draft);
@@ -84,6 +105,25 @@ public final class EventJournalTest {
             if (event.type.equals(type)) return event.importance;
         }
         return 0;
+    }
+
+    private static int count(List<StoryEvent.Draft> events, String type) {
+        int count = 0;
+        for (StoryEvent.Draft event : events) if (event.type.equals(type)) count++;
+        return count;
+    }
+
+    private static String summary(List<StoryEvent.Draft> events, String type) {
+        for (StoryEvent.Draft event : events) {
+            if (event.type.equals(type)) return event.summary;
+        }
+        return "";
+    }
+
+    private static String inventory(String first, int firstCount,
+                                    String second, int secondCount) {
+        return "{\"carriedItems\":{\"" + first + "\":" + firstCount
+                + ",\"" + second + "\":" + secondCount + "}}";
     }
 
     private static String before() {

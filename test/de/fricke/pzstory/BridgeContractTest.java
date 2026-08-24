@@ -74,6 +74,34 @@ public final class BridgeContractTest {
                         && lua.contains("Events.OnZombieDead")
                         && lua.contains("Events.OnPlayerAttackFinished")
                         && lua.contains("api(\"observeNow\")"));
+        T.ok("transient callbacks never start a provider request",
+                !method(lua, "local function observeTransient")
+                        .contains("requestPage"));
+        T.ok("action hooks record only successful completions",
+                lua.contains("local function hookComplete")
+                        && lua.contains("local result = original(self, ...)")
+                        && lua.contains("if result == true then")
+                        && lua.contains("api(\"recordAction\")"));
+        for (String timedAction : new String[] {
+                "TimedActions/ISCraftAction", "TimedActions/ISRepairClothing",
+                "Vehicles/TimedActions/ISRepairEngine",
+                "Farming/TimedActions/ISSeedActionNew",
+                "Camping/TimedActions/ISLightFromPetrol"
+        }) {
+            T.ok(timedAction + " is explicitly loaded",
+                    lua.contains("require \"" + timedAction + "\""));
+        }
+        for (String action : new String[] {
+                "crafted", "repaired", "farmed", "fire_started", "item_used"
+        }) {
+            T.ok(action + " completion is covered",
+                    lua.contains("\"" + action + "\""));
+        }
+        T.ok("door state is sampled before its successful toggle",
+                lua.indexOf("local wasOpen = self.item and self.item:IsOpen()")
+                        < lua.indexOf("local result = originalDoorComplete"));
+        T.ok("action bridge uses pure allow-list policy",
+                api.contains("ActionEventPolicy.resolve(action, detail)"));
         T.ok("request captures pending events before provider start",
                 api.contains("EventJournal.Capture capturedEvents")
                         && api.contains("capturedEvents.ids"));
@@ -97,7 +125,16 @@ public final class BridgeContractTest {
                                 .contains("currentPlaceId"));
         T.ok("place visit count and pending events are visible",
                 probe.contains("VISIT \" .. visits")
-                        && probe.contains("PENDING EVENTS:"));
+                        && probe.contains("PENDING INBOX"));
+        T.ok("F5 switches the inbox to narrated history",
+                probe.contains("Keyboard.KEY_F5")
+                        && probe.contains("switchInbox()")
+                        && probe.contains("RECENT HISTORY")
+                        && probe.contains("PAGE \" .. event.narrated"));
+        T.ok("inbox presents bounded factual summaries",
+                probe.contains("event.summary")
+                        && probe.contains("if #overlay.events >= 6 then break end")
+                        && probe.contains("if #summary > 88 then"));
     }
 
     private static String read(String path) {

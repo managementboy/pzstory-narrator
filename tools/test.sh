@@ -32,6 +32,7 @@ fi
 # Pure-Java units only. Anything touching zombie.* belongs in the in-game
 # checks listed in dev/README.md, not here.
 UNITS="src/de/fricke/pzstory/AtomicFiles.java \
+src/de/fricke/pzstory/ActionEventPolicy.java \
 src/de/fricke/pzstory/BoundedFiles.java \
 src/de/fricke/pzstory/Campaign.java \
 src/de/fricke/pzstory/Config.java \

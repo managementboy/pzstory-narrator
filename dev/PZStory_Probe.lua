@@ -2,6 +2,7 @@
   PZStory - Phase 2 harness.
 
   F8  - toggle the local Testing Mode overlay
+  F5  - switch its Event Inbox between pending and recent history
   F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
   F11 - dump the local event journal (contains local ids)
@@ -16,6 +17,7 @@
 
 local TAG = "[PZStoryProbe] "
 local OVERLAY_BIND  = "PZStory: testing mode overlay"
+local INBOX_BIND    = "PZStory: testing mode inbox view"
 local SNAPSHOT_BIND = "PZStory: provider state to log"
 local TEST_BIND     = "PZStory: model self-test"
 local EVENTS_BIND   = "PZStory: local event journal to log"
@@ -39,6 +41,7 @@ local function notify(text, good)
 end
 
 table.insert(keyBinding, { value = OVERLAY_BIND,  key = Keyboard.KEY_F8 })
+table.insert(keyBinding, { value = INBOX_BIND,    key = Keyboard.KEY_F5 })
 table.insert(keyBinding, { value = SNAPSHOT_BIND, key = Keyboard.KEY_F9 })
 table.insert(keyBinding, { value = TEST_BIND,     key = Keyboard.KEY_F10 })
 table.insert(keyBinding, { value = EVENTS_BIND,   key = Keyboard.KEY_F11 })
@@ -181,6 +184,7 @@ local overlay = {
     events = {},
     pending = 0,
     error = nil,
+    mode = "pending",
 }
 
 local function decodeDiagnostic(method)
@@ -226,13 +230,17 @@ local function refreshOverlay()
     if type(journal.events) == "table" then
         for i = #journal.events, 1, -1 do
             local event = journal.events[i]
-            if type(event) == "table" and tonumber(event.narratedPage or 0) == 0 then
+            local narrated = type(event) == "table" and tonumber(event.narratedPage or 0) or 0
+            if type(event) == "table"
+                    and (overlay.mode == "recent" or narrated == 0) then
                 table.insert(overlay.events, {
                     kind = tostring(event.type or "event"):gsub("_", " "):upper(),
                     importance = tonumber(event.importance) or 0,
                     stamp = tostring(event.stamp or ""),
+                    summary = tostring(event.summary or ""),
+                    narrated = narrated,
                 })
-                if #overlay.events >= 8 then break end
+                if #overlay.events >= 6 then break end
             end
         end
     end
@@ -281,7 +289,8 @@ local function drawOverlay()
         shadowText(UIFont.Small, x, y, overlay.error, 1, 0.3, 0.3, false)
         return
     end
-    shadowText(UIFont.Small, x, y, "PENDING EVENTS: " .. overlay.pending,
+    local view = overlay.mode == "recent" and "RECENT HISTORY" or "PENDING INBOX"
+    shadowText(UIFont.Small, x, y, view .. "  |  PENDING: " .. overlay.pending,
         overlay.pending > 0 and 1 or 0.6, overlay.pending > 0 and 0.8 or 0.9, 0.35, false)
     y = y + 18
     if #overlay.events == 0 then
@@ -290,12 +299,22 @@ local function drawOverlay()
         for _, event in ipairs(overlay.events) do
             local r, g, b = 1, 0.85, 0.3
             if event.importance >= 75 then r, g, b = 1, 0.3, 0.25 end
+            if event.narrated > 0 then r, g, b = 0.55, 0.75, 0.65 end
             local at = event.stamp ~= "" and (event.stamp .. "  ") or ""
+            local state = event.narrated > 0 and ("PAGE " .. event.narrated) or "PENDING"
             shadowText(UIFont.Small, x, y,
-                at .. event.kind .. "  [" .. event.importance .. "]", r, g, b, false)
+                at .. event.kind .. "  [" .. event.importance .. "]  " .. state,
+                r, g, b, false)
+            y = y + 17
+            local summary = event.summary:gsub("[\r\n]", " ")
+            if #summary > 88 then summary = summary:sub(1, 85) .. "..." end
+            shadowText(UIFont.Small, x + 14, y, summary, r * 0.9, g * 0.9, b * 0.9, false)
             y = y + 17
         end
     end
+    y = y + 4
+    shadowText(UIFont.Small, x, y, "F5: switch inbox/history  |  F8: close",
+        0.65, 0.75, 0.8, false)
 end
 
 local function toggleOverlay()
@@ -303,6 +322,14 @@ local function toggleOverlay()
     overlay.nextRefresh = 0
     refreshOverlay()
     notify("PZStory Testing Mode: " .. (overlay.visible and "ON" or "OFF"), true)
+end
+
+local function switchInbox()
+    if not overlay.visible then overlay.visible = true end
+    overlay.mode = overlay.mode == "pending" and "recent" or "pending"
+    overlay.nextRefresh = 0
+    refreshOverlay()
+    notify("PZStory Inbox: " .. overlay.mode:upper(), true)
 end
 
 -- ------------------------------------------------------------------ wiring
@@ -321,6 +348,7 @@ end)
 
 Events.OnKeyPressed.Add(function(key)
     if key == getCore():getKey(OVERLAY_BIND) then toggleOverlay() end
+    if key == getCore():getKey(INBOX_BIND) then switchInbox() end
     if key == getCore():getKey(SNAPSHOT_BIND) then takeSnapshot("keypress") end
     if key == getCore():getKey(TEST_BIND) then runSelfTest() end
     if key == getCore():getKey(EVENTS_BIND) then

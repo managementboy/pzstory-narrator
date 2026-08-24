@@ -5,7 +5,10 @@ working on the mod.
 
 ## `PZStory_Probe.lua`
 
-Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get four keys:
+Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get six keys:
+
+- **F8** — toggle the local Testing Mode overlay and pending Event Inbox.
+- **F5** — switch the inbox between pending events and recent narrated history.
 
 - **F9** — dump the minimised, provider-facing live-state block to
   `console.txt`. This is the fastest way to answer "what did the narrator
@@ -17,7 +20,7 @@ Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get four keys:
 - **F6** — dump structured place memory, including the local identities used
   to distinguish same-named rooms.
 
-Left out of the shipped mod because a player does not need four debug keybinds,
+Left out of the shipped mod because a player does not need debug keybinds,
 and function keys collide with other mods or screenshot overlays.
 
 ## `context-audit.html`

@@ -38,6 +38,8 @@ public final class StateReader {
     private static final int MAX_INVENTORY_ITEMS = 1000;
     private static final int MAX_INVENTORY_BAGS = 64;
     private static final int MAX_INVENTORY_LABELS = 256;
+    private static final int MAX_EVENT_INVENTORY_ITEMS = 256;
+    private static final int MAX_EVENT_INVENTORY_LABELS = 128;
     private static final int MAX_LITERATURE = 200;
     private static final int MAX_ITEM_NAME_CHARS = 160;
 
@@ -119,6 +121,7 @@ public final class StateReader {
 
         gameTime(j);
         eventCharacter(j, p);
+        eventInventory(j, p);
         position(j, p);
         doingAndWeather(j, p);
         noise(j, p);
@@ -175,6 +178,46 @@ public final class StateReader {
         } catch (Throwable t) {
             j.rollback(checkpoint);
             note("eventCharacter", t);
+        }
+    }
+
+    /** Bounded all-on-person multiset; moving an item between bags is stable. */
+    private static void eventInventory(Json j, IsoPlayer p) {
+        Json.Checkpoint checkpoint = j.checkpoint();
+        try {
+            Map<String, int[]> counts = new LinkedHashMap<>();
+            IdentityHashMap<ItemContainer, Boolean> seen = new IdentityHashMap<>();
+            int[] remaining = { MAX_EVENT_INVENTORY_ITEMS };
+            collectEventInventory(p.getInventory(), counts, seen, remaining, 0);
+            j.objKey("carriedItems");
+            for (Map.Entry<String, int[]> entry : counts.entrySet()) {
+                j.put(entry.getKey(), entry.getValue()[0]);
+            }
+            j.endObj();
+        } catch (Throwable t) {
+            j.rollback(checkpoint);
+            note("eventInventory", t);
+        }
+    }
+
+    private static void collectEventInventory(ItemContainer container,
+            Map<String, int[]> counts,
+            IdentityHashMap<ItemContainer, Boolean> seen,
+            int[] remaining, int depth) {
+        if (container == null || depth > 3 || remaining[0] <= 0
+                || seen.put(container, Boolean.TRUE) != null) return;
+        for (InventoryItem item : container.getItems()) {
+            if (remaining[0]-- <= 0) break;
+            if (item == null) continue;
+            String name = boundedLabel(displayName(item));
+            if (counts.containsKey(name)) counts.get(name)[0]++;
+            else if (counts.size() < MAX_EVENT_INVENTORY_LABELS) {
+                counts.put(name, new int[] { 1 });
+            }
+            if (item instanceof zombie.inventory.types.InventoryContainer bag) {
+                collectEventInventory(bag.getInventory(), counts, seen,
+                        remaining, depth + 1);
+            }
         }
     }
 

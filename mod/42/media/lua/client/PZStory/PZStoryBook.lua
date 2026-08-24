@@ -18,6 +18,23 @@
       degrading to proportional text.
 ]]
 
+-- Load the Build 42 timed-action classes before installing completion hooks.
+-- All paths below are shipped by the game; explicit loading avoids silently
+-- losing coverage when another UI module has not happened to require them.
+require "TimedActions/ISCraftAction"
+require "TimedActions/ISRepairClothing"
+require "TimedActions/ISEatFoodAction"
+require "TimedActions/ISDrinkFromBottle"
+require "TimedActions/ISDrinkFluidAction"
+require "TimedActions/ISOpenCloseDoor"
+require "Vehicles/TimedActions/ISRepairEngine"
+require "Vehicles/TimedActions/ISRepairLightbar"
+require "Farming/TimedActions/ISSeedActionNew"
+require "Farming/TimedActions/ISWaterPlantAction"
+require "Camping/TimedActions/ISLightFromPetrol"
+require "Camping/TimedActions/ISLightFromLiterature"
+require "Camping/TimedActions/ISLightFromKindle"
+
 PZStoryBook = ISPanel:derive("PZStoryBook")
 
 -- ------------------------------------------------------------------ palette
@@ -77,7 +94,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "5"
+local NEEDS_API = "6"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -2076,6 +2093,67 @@ if Events.OnExitVehicle then Events.OnExitVehicle.Add(observeTransient) end
 if Events.OnUseVehicle then Events.OnUseVehicle.Add(observeTransient) end
 if Events.OnPlayerAttackFinished then
     Events.OnPlayerAttackFinished.Add(observeTransient)
+end
+
+-- Completion hooks cover actions for which Build 42 exposes no stable global
+-- event. Wrapping `complete` (not start/perform) means cancelled or invalid
+-- actions never enter story memory. Each Java call is allow-listed again.
+local function actionEvent(kind, label)
+    local f = api("recordAction")
+    if f then pcall(f, kind, tostring(label or "something")) end
+end
+
+local function hookComplete(class, kind, label)
+    if type(class) ~= "table" or type(class.complete) ~= "function"
+            or class._pzstoryCompleteHook then return end
+    class._pzstoryCompleteHook = true
+    local original = class.complete
+    class.complete = function(self, ...)
+        local result = original(self, ...)
+        if result == true then
+            local text = "something"
+            if label then pcall(function() text = label(self) or text end) end
+            actionEvent(kind, text)
+        end
+        return result
+    end
+end
+
+hookComplete(ISCraftAction, "crafted", function(a)
+    return a.recipe and a.recipe:getName() or "something useful"
+end)
+hookComplete(ISRepairClothing, "repaired", function(a)
+    return a.clothing and a.clothing:getName() or "clothing"
+end)
+hookComplete(ISRepairEngine, "repaired", function() return "a vehicle engine" end)
+hookComplete(ISRepairLightbar, "repaired", function() return "a vehicle lightbar" end)
+hookComplete(ISSeedActionNew, "farmed", function(a)
+    return "planted " .. tostring(a.typeOfSeed or "seeds")
+end)
+hookComplete(ISWaterPlantAction, "farmed", function() return "watered a crop" end)
+hookComplete(ISLightFromPetrol, "fire_started", function() return "a fire" end)
+hookComplete(ISLightFromLiterature, "fire_started", function() return "a fire" end)
+hookComplete(ISLightFromKindle, "fire_started", function() return "a fire" end)
+hookComplete(ISEatFoodAction, "item_used", function(a)
+    return a.item and a.item:getName() or "food"
+end)
+hookComplete(ISDrinkFromBottle, "item_used", function(a)
+    return a.item and a.item:getName() or "a drink"
+end)
+hookComplete(ISDrinkFluidAction, "item_used", function() return "a drink" end)
+
+if type(ISOpenCloseDoor) == "table" and type(ISOpenCloseDoor.complete) == "function"
+        and not ISOpenCloseDoor._pzstoryCompleteHook then
+    ISOpenCloseDoor._pzstoryCompleteHook = true
+    local originalDoorComplete = ISOpenCloseDoor.complete
+    ISOpenCloseDoor.complete = function(self, ...)
+        local wasOpen = self.item and self.item:IsOpen() or false
+        local result = originalDoorComplete(self, ...)
+        if result == true then
+            actionEvent(wasOpen and "door_closed" or "door_opened", "door")
+        end
+        return result
+    end
 end
 
 -- The campaign store lives inside the save folder, so it must be re-pointed

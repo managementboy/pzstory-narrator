@@ -39,6 +39,14 @@ public final class StoryEvent {
     public static final String WEATHER_CHANGED  = "weather_changed";
     public static final String SLEEP_STARTED    = "sleep_started";
     public static final String WOKE_UP          = "woke_up";
+    public static final String ITEM_USED        = "item_used";
+    public static final String ITEM_ACQUIRED    = "item_acquired";
+    public static final String CRAFTED          = "crafted";
+    public static final String REPAIRED         = "repaired";
+    public static final String FARMED           = "farmed";
+    public static final String FIRE_STARTED     = "fire_started";
+    public static final String DOOR_OPENED      = "door_opened";
+    public static final String DOOR_CLOSED      = "door_closed";
 
     public static final int MAX_SUMMARY_CHARS = 320;
     public static final int MAX_PLACE_CHARS = 192;

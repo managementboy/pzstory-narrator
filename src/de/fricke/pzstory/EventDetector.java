@@ -23,6 +23,7 @@ public final class EventDetector {
         PlaceRef from = PlaceRef.fromState(before), to = PlaceRef.fromState(after);
         movement(before, after, from, to, stamp, out);
         combat(before, after, to, stamp, out);
+        inventory(before, after, to, stamp, out);
         body(before, after, to, stamp, out);
         skills(before, after, to, stamp, out);
         vehicle(before, after, to, stamp, out);
@@ -126,6 +127,30 @@ public final class EventDetector {
                             ? "A wound stopped bleeding or was brought under control."
                             : "Their injuries noticeably improved.",
                     28, Map.of());
+        }
+    }
+
+    private static void inventory(Map<String, Object> before,
+                                  Map<String, Object> after,
+                                  PlaceRef place, String stamp,
+                                  List<StoryEvent.Draft> out) {
+        Map<String, Object> a = JsonParse.map(before, "carriedItems");
+        Map<String, Object> b = JsonParse.map(after, "carriedItems");
+        if (a == null || b == null) return;
+        int emitted = 0;
+        for (Map.Entry<String, Object> entry : b.entrySet()) {
+            if (emitted >= 4) break;
+            int oldCount = JsonParse.num(a, entry.getKey(), 0);
+            int newCount = entry.getValue() instanceof Number n ? n.intValue() : 0;
+            if (newCount <= oldCount) continue;
+            int gained = newCount - oldCount;
+            String item = safeLabel(entry.getKey(), "an item");
+            String summary = gained == 1
+                    ? "They acquired " + item + "."
+                    : "They acquired " + gained + " " + item + ".";
+            add(out, StoryEvent.ITEM_ACQUIRED, stamp, place, summary, 46,
+                    Map.of("item", item, "count", Integer.toString(gained)));
+            emitted++;
         }
     }
 

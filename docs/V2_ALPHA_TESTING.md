@@ -6,7 +6,7 @@ state sample. Use a copied save. Keep an untouched copy of the save and its
 
 ## Build and install
 
-The source release is `2.0.0-alpha.1` and bridge API is `5`. The tracked JAR on
+The source release is `2.0.0-alpha.2` and bridge API is `6`. The tracked JAR on
 the development branch is not usable until it has been rebuilt from this exact
 checkout.
 
@@ -39,13 +39,19 @@ directory and restart the game; loading another save does not reload Java.
    enter the new save.
 7. Revisit two same-named rooms. Prose may recognise familiarity but must not
    carry furniture or objects from one room into the other.
+8. Acquire an item, craft something, repair an item, eat or drink, tend a crop,
+   light a fire, and open then close a door. Testing Mode should show each
+   completed action. Cancelled timed actions must not appear.
 
 ## Inspect local data
 
 Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
 
 - F8: toggle Testing Mode. It labels the current place in the world with its
-  visit count and shows up to four pending detected events on screen.
+  visit count and shows up to six pending detected events with their factual
+  summaries and significance.
+- F5: switch the visible Event Inbox between pending events and recent history.
+  Narrated events are labelled with the page that consumed them.
 - F9: provider-facing state, with privacy minimisation.
 - F10: provider connectivity test.
 - F11: local event journal.
@@ -64,3 +70,7 @@ journal before contacting a provider. Test with a large inventory, a crowded
 street and fast-forward. Report visible stutter, repeated identical events,
 missed high-value events, or unusual campaign-file growth with reproduction
 steps.
+
+The carried-item sampler is bounded to 256 items, 128 distinct labels and four
+new-item events per observation. Moving the same item between carried bags must
+not create an acquisition event.
