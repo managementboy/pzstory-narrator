@@ -5,6 +5,17 @@ working on the mod.
 
 ## `PZStory_Probe.lua`
 
+When Project Zomboid is launched with `-debug`, **F4** opens the guided
+PZStory Test Lab and **F3** runs the selected suite. F4 cycles Quick Checks,
+Event Walkthrough and Continuity Walkthrough, then closes the lab. Quick
+Checks validates the live bridge and all local diagnostic stores without a
+provider request. The walkthroughs watch the real event journal and advance
+only after ordinary gameplay hooks fire. The continuity fixture equips one
+axe and spawns two nearby zombies; the player still performs both real kills.
+
+The lab refuses to prepare fixtures outside game debug mode. Use a copied or
+disposable save: spawned items and zombies are normal save-world objects.
+
 Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get six keys:
 
 - **F8** — toggle the local Testing Mode overlay and pending Event Inbox.

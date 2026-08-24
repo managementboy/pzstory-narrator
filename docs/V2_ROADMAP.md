@@ -30,7 +30,10 @@ Remaining before this milestone is promoted from alpha:
 
 ## Milestone 2 — Story memory
 
-Implemented through `2.0.0-alpha.4`:
+Implemented through `2.0.0-alpha.5`:
+
+- A debug-only guided Test Lab runs bridge/privacy checks and watches real
+  gameplay events through repeatable door, vehicle and weapon walkthroughs.
 
 - Schema-5 bounded typed facts for world, biography, people, possessions,
   injuries, knowledge, beliefs, promises and unresolved threads.

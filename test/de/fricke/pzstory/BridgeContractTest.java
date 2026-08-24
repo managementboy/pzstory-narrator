@@ -153,6 +153,35 @@ public final class BridgeContractTest {
                 probe.contains("event.summary")
                         && probe.contains("if #overlay.events >= 6 then break end")
                         && probe.contains("if #summary > 88 then"));
+
+        T.group("Testing Mode - guided Test Lab");
+        T.ok("Test Lab has configurable keys",
+                probe.contains("Keyboard.KEY_F4")
+                        && probe.contains("Keyboard.KEY_F3")
+                        && probe.contains("runLabSuite()"));
+        T.ok("Test Lab is gated by game debug mode",
+                probe.contains("isDebugEnabled() == true")
+                        && probe.contains("DEBUG MODE REQUIRED"));
+        T.ok("quick checks never call a provider",
+                method(probe, "local function runQuickChecks()")
+                        .contains("providerPreview")
+                        && !method(probe, "local function runQuickChecks()")
+                                .contains("requestPage")
+                        && !method(probe, "local function runQuickChecks()")
+                                .contains("selfTest"));
+        T.ok("walkthrough judges the real journal",
+                probe.contains("local function eventCount(kind)")
+                        && probe.contains("sawAfter(\"door_opened\")")
+                        && probe.contains("sawAfter(\"vehicle_entered\")")
+                        && probe.contains("eventCount(\"kill\")"));
+        T.ok("weapon fixture uses Build 42 debug primitives",
+                probe.contains("AddItem(\"Base.Axe\")")
+                        && probe.contains("addZombiesInOutfit")
+                        && probe.contains("two zombies spawned"));
+        T.ok("Test Lab reports bounded visible results",
+                probe.contains("[PZStoryTestLab]")
+                        && probe.contains("if #lab.results > 12")
+                        && probe.contains("Events.OnPostUIDraw.Add(drawLab)"));
     }
 
     private static String read(String path) {

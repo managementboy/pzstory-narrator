@@ -33,7 +33,7 @@ public final class Version {
      * Human-facing release. Bump for any shipped change.
      * MUST equal modversion in mod/42/mod.info.
      */
-    public static final String RELEASE = "2.0.0-alpha.4";
+    public static final String RELEASE = "2.0.0-alpha.5";
 
     /**
      * Lua/Java bridge compatibility. Bump when production Lua depends on a
@@ -52,6 +52,7 @@ public final class Version {
      *   6  release 2.0.0-alpha.2 - completed-action event bridge
      *   7  release 2.0.0-alpha.3 - structured fact-memory diagnostics
      *   8  release 2.0.0-alpha.4 - thread and continuity diagnostics
+     *      release 2.0.0-alpha.5 - debug-only Lua Test Lab; API unchanged
      */
     public static final String API = "8";
 }

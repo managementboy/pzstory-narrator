@@ -6,7 +6,7 @@ state sample. Use a copied save. Keep an untouched copy of the save and its
 
 ## Build and install
 
-The source release is `2.0.0-alpha.4` and bridge API is `8`. The tracked JAR on
+The source release is `2.0.0-alpha.5` and bridge API is `8`. The tracked JAR on
 the development branch is not usable until it has been rebuilt from this exact
 checkout.
 
@@ -59,6 +59,8 @@ Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
 - F10: provider connectivity test.
 - F11: local event journal.
 - F6: local world memory (moved from F12 to avoid common screenshot overlays).
+- F4: open/cycle the debug-only guided Test Lab.
+- F3: run or restart the selected Test Lab suite.
 
 F11 and F6 intentionally contain local stable ids and must not appear in the
 provider payload or generated page. They are debugging data; review them before

@@ -7,6 +7,8 @@
   F10 - fire a tiny model request and stream the reply into console
   F11 - dump the local event journal (contains local ids)
   F6  - dump structured place memory (contains local ids)
+  F4  - open the debug-only guided Test Lab
+  F3  - run/advance the selected Test Lab suite
 
   There is still no UI. The point of this file is to prove the whole chain
   end to end - key, network, SSE parsing, background thread, per-frame drain -
@@ -22,6 +24,8 @@ local SNAPSHOT_BIND = "PZStory: provider state to log"
 local TEST_BIND     = "PZStory: model self-test"
 local EVENTS_BIND   = "PZStory: local event journal to log"
 local MEMORY_BIND   = "PZStory: local world memory to log"
+local LAB_BIND      = "PZStory: open guided test lab"
+local LAB_RUN_BIND  = "PZStory: run guided test step"
 
 local function say(...)
     local parts = {}
@@ -46,6 +50,8 @@ table.insert(keyBinding, { value = SNAPSHOT_BIND, key = Keyboard.KEY_F9 })
 table.insert(keyBinding, { value = TEST_BIND,     key = Keyboard.KEY_F10 })
 table.insert(keyBinding, { value = EVENTS_BIND,   key = Keyboard.KEY_F11 })
 table.insert(keyBinding, { value = MEMORY_BIND,   key = Keyboard.KEY_F6 })
+table.insert(keyBinding, { value = LAB_BIND,      key = Keyboard.KEY_F4 })
+table.insert(keyBinding, { value = LAB_RUN_BIND,  key = Keyboard.KEY_F3 })
 
 -- ---------------------------------------------------------------- snapshot
 
@@ -442,6 +448,254 @@ local function switchInbox()
     notify("PZStory Inbox: " .. overlay.mode:upper(), true)
 end
 
+-- ------------------------------------------------------- guided Test Lab
+
+-- The lab is deliberately available only in the development probe and only
+-- while the game itself is running with -debug. It never calls the provider,
+-- never edits campaign memory directly, and judges the real event journal
+-- produced by the normal Lua/Java integration.
+local lab = {
+    visible = false,
+    running = false,
+    suite = 1,
+    step = 0,
+    title = "READY",
+    instruction = "F3: run quick checks  |  F4: close",
+    results = {},
+    baseline = {},
+    deadline = 0,
+}
+
+local suites = { "QUICK CHECKS", "EVENT WALKTHROUGH", "CONTINUITY WALKTHROUGH" }
+
+local function debugEnabled()
+    local enabled = false
+    pcall(function() enabled = isDebugEnabled() == true end)
+    return enabled
+end
+
+local function labResult(name, pass, detail)
+    table.insert(lab.results, {
+        name = name,
+        pass = pass == true,
+        detail = tostring(detail or ""),
+    })
+    if #lab.results > 12 then table.remove(lab.results, 1) end
+    print("[PZStoryTestLab] " .. (pass and "PASS" or "FAIL") .. " | "
+        .. name .. (detail and (" | " .. tostring(detail)) or ""))
+end
+
+local function journalEvents()
+    local root = decodeDiagnostic("eventJournal")
+    if root == nil or type(root.events) ~= "table" then return {} end
+    return root.events
+end
+
+local function eventCount(kind)
+    local count = 0
+    for _, event in ipairs(journalEvents()) do
+        if type(event) == "table" and tostring(event.type or "") == kind then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function rememberCounts()
+    lab.baseline = {}
+    local kinds = { "door_opened", "door_closed", "vehicle_entered", "vehicle_exited",
+        "kill", "item_acquired", "craft_completed", "repair_completed",
+        "sleep_started", "sleep_ended" }
+    for _, kind in ipairs(kinds) do lab.baseline[kind] = eventCount(kind) end
+end
+
+local function sawAfter(kind)
+    return eventCount(kind) > (lab.baseline[kind] or 0)
+end
+
+local function prepareWeaponFixture()
+    local pl = getPlayer()
+    if pl == nil then return false, "no player" end
+    local weapon
+    local ok, err = pcall(function()
+        weapon = pl:getInventory():AddItem("Base.Axe")
+        if weapon ~= nil then
+            pl:setPrimaryHandItem(weapon)
+            if weapon:isTwoHandWeapon() then pl:setSecondaryHandItem(weapon) end
+        end
+        -- This is the same Build 42 primitive used by the installed horde
+        -- debugger. Place two ordinary zombies close enough for a controlled
+        -- combat test, but never kill them or alter the player's kill count.
+        addZombiesInOutfit(math.floor(pl:getX()) + 3, math.floor(pl:getY()),
+            math.floor(pl:getZ()), 2, nil, 50, false, false, false, false,
+            false, false, 1.0, false, 0, false)
+    end)
+    if not ok then return false, err end
+    return weapon ~= nil, weapon and "axe equipped; two zombies spawned" or "axe unavailable"
+end
+
+local function runQuickChecks()
+    lab.results = {}
+    local methods = { "version", "apiVersion", "eventJournal", "worldMemory",
+        "factMemory", "threadMemory", "continuityMemory", "providerPreview" }
+    labResult("game debug mode", debugEnabled(), debugEnabled() and "enabled" or "launch with -debug")
+    labResult("Java bridge", type(PZStory) == "table", type(PZStory))
+    if type(PZStory) ~= "table" then return end
+    for _, method in ipairs(methods) do
+        labResult("bridge: " .. method, type(PZStory[method]) == "function")
+    end
+    for _, method in ipairs({ "eventJournal", "worldMemory", "factMemory",
+            "threadMemory", "continuityMemory" }) do
+        labResult(method .. " JSON", decodeDiagnostic(method) ~= nil)
+    end
+    local preview = ""
+    local ok = pcall(function() preview = tostring(PZStory.providerPreview() or "") end)
+    local pl = getPlayer()
+    local coordinateLeak = false
+    if ok and pl ~= nil then
+        local x, y = tostring(math.floor(pl:getX())), tostring(math.floor(pl:getY()))
+        coordinateLeak = preview:find('"x"%s*:%s*' .. x) ~= nil
+            or preview:find('"y"%s*:%s*' .. y) ~= nil
+    end
+    labResult("provider preview", ok and preview ~= "", #preview .. " chars")
+    labResult("exact coordinates withheld", ok and not coordinateLeak)
+    lab.title = "QUICK CHECKS COMPLETE"
+    lab.instruction = "Review PASS/FAIL below. F3 repeats; F4 closes."
+end
+
+local function beginWalkthrough(continuity)
+    lab.results = {}
+    lab.running = true
+    lab.step = continuity and 10 or 1
+    rememberCounts()
+    lab.deadline = getTimestampMs() + 120000
+    if continuity then
+        local ok, detail = prepareWeaponFixture()
+        labResult("prepare weapon fixture", ok, detail)
+        lab.title = "CONTINUITY 1/2"
+        lab.instruction = "Kill both spawned zombies with the equipped axe."
+    else
+        lab.title = "EVENTS 1/3"
+        lab.instruction = "Open a nearby ordinary door. The lab will detect it."
+    end
+end
+
+local function checkWalkthrough()
+    if not lab.running then return end
+    if getTimestampMs() > lab.deadline then
+        labResult("step timed out", false, lab.instruction)
+        lab.running = false
+        lab.title = "WALKTHROUGH PAUSED"
+        lab.instruction = "F3 restarts the suite."
+        return
+    end
+    if lab.step == 1 and sawAfter("door_opened") then
+        labResult("door opened", true)
+        lab.step = 2
+        lab.title = "EVENTS 2/3"
+        lab.instruction = "Close the same door."
+    elseif lab.step == 2 and sawAfter("door_closed") then
+        labResult("door closed", true)
+        lab.step = 3
+        lab.title = "EVENTS 3/3"
+        lab.instruction = "Enter a vehicle, then exit it."
+    elseif lab.step == 3 and sawAfter("vehicle_entered") and sawAfter("vehicle_exited") then
+        labResult("vehicle entered", true)
+        labResult("vehicle exited", true)
+        lab.running = false
+        lab.title = "EVENT WALKTHROUGH COMPLETE"
+        lab.instruction = "All real gameplay hooks passed."
+    elseif lab.step == 10 and eventCount("kill") >= (lab.baseline.kill or 0) + 2 then
+        labResult("two real kills detected", true)
+        lab.step = 11
+        lab.title = "CONTINUITY 2/2"
+        lab.instruction = "Waiting for same-weapon familiarity evidence..."
+    elseif lab.step == 11 then
+        local root = decodeDiagnostic("continuityMemory")
+        local memory = root and root.continuityMemory
+        local found = false
+        if memory and type(memory.entries) == "table" then
+            for _, entry in ipairs(memory.entries) do
+                if type(entry) == "table" and entry.kind == "weapon"
+                        and (tonumber(entry.occurrences) or 0) >= 2 then
+                    found = true
+                end
+            end
+        end
+        if found then
+            labResult("weapon familiarity", true, "two observations promoted")
+            lab.running = false
+            lab.title = "CONTINUITY COMPLETE"
+            lab.instruction = "The exact weapon was remembered correctly."
+        end
+    end
+end
+
+local function runLabSuite()
+    if not lab.visible then lab.visible = true end
+    if not debugEnabled() then
+        lab.results = {}
+        labResult("game debug mode", false, "restart Project Zomboid with -debug")
+        lab.title = "DEBUG MODE REQUIRED"
+        lab.instruction = "The Test Lab will not modify a normal game."
+        return
+    end
+    if lab.suite == 1 then runQuickChecks()
+    elseif lab.suite == 2 then beginWalkthrough(false)
+    else beginWalkthrough(true) end
+end
+
+local function toggleLab()
+    if not debugEnabled() then
+        lab.visible = true
+        lab.results = {}
+        labResult("game debug mode", false, "restart Project Zomboid with -debug")
+        lab.title = "DEBUG MODE REQUIRED"
+        lab.instruction = "F4 closes. No save data was changed."
+        return
+    end
+    if not lab.visible then
+        lab.visible = true
+        lab.title = suites[lab.suite]
+        lab.instruction = "F3: run  |  F4: next suite/close after third"
+    elseif not lab.running then
+        if lab.suite == #suites then
+            lab.visible = false
+            lab.suite = 1
+            return
+        end
+        lab.suite = lab.suite + 1
+        lab.title = suites[lab.suite]
+        lab.instruction = "F3: run this suite  |  F4: next suite"
+        lab.results = {}
+    else
+        lab.running = false
+        lab.visible = false
+    end
+end
+
+local function drawLab()
+    if not lab.visible then return end
+    local pl = getPlayer()
+    if pl == nil then return end
+    local x = getPlayerScreenLeft(pl:getPlayerNum()) + 24
+    local y = getPlayerScreenTop(pl:getPlayerNum()) + 330
+    shadowText(UIFont.Medium, x, y, "PZSTORY TEST LAB — " .. lab.title,
+        0.55, 1, 0.75, false)
+    y = y + 23
+    shadowText(UIFont.Small, x, y, lab.instruction, 0.9, 0.9, 0.9, false)
+    y = y + 20
+    for _, result in ipairs(lab.results) do
+        local label = (result.pass and "PASS  " or "FAIL  ") .. result.name
+        if result.detail ~= "" then label = label .. " — " .. result.detail end
+        if #label > 100 then label = label:sub(1, 97) .. "..." end
+        shadowText(UIFont.Small, x, y, label,
+            result.pass and 0.45 or 1, result.pass and 1 or 0.35,
+            result.pass and 0.55 or 0.3, false)
+        y = y + 17
+    end
+end
+
 -- ------------------------------------------------------------------ wiring
 
 Events.OnGameStart.Add(function()
@@ -457,6 +711,8 @@ Events.OnGameStart.Add(function()
 end)
 
 Events.OnKeyPressed.Add(function(key)
+    if key == getCore():getKey(LAB_BIND) then toggleLab() end
+    if key == getCore():getKey(LAB_RUN_BIND) then runLabSuite() end
     if key == getCore():getKey(OVERLAY_BIND) then toggleOverlay() end
     if key == getCore():getKey(INBOX_BIND) then switchInbox() end
     if key == getCore():getKey(SNAPSHOT_BIND) then takeSnapshot("keypress") end
@@ -470,5 +726,7 @@ Events.OnKeyPressed.Add(function(key)
 end)
 
 Events.OnTick.Add(onTick)
+Events.OnTick.Add(checkWalkthrough)
 Events.OnTickEvenPaused.Add(refreshOverlay)
 Events.OnPostUIDraw.Add(drawOverlay)
+Events.OnPostUIDraw.Add(drawLab)
