@@ -55,6 +55,12 @@ Remaining:
 
 ## Milestone 3 — Campaign Director
 
+Foundation shipped in `2.0.0-alpha.7`: explicit Chronicler/Director mode,
+schema-6 private campaign bible frozen in the first-page transaction, one
+provider-visible major objective, and hidden-plan separation. Destination
+validation, objective evidence, fail-forward transitions, and staged reveals
+remain in this milestone.
+
 - Add an opt-in Director mode beside the current Chronicler mode.
 - Generate and freeze a private campaign bible at the first-page transaction.
 - Store a fixed truth, cast, settlement route, clues, revelations, acts and

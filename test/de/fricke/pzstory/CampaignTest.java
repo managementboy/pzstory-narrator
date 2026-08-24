@@ -19,6 +19,8 @@ public final class CampaignTest {
 
             T.ok("scenario is stored once", Campaign.setScenario("road"));
             T.ok("scenario cannot change mid-book", !Campaign.setScenario("survival"));
+            T.eq("campaign defaults to chronicler", "chronicler", Campaign.mode());
+            T.ok("director can be selected before page one", Campaign.setMode("director"));
             T.eq("first NEXT note stored", "will steer the next page",
                     Campaign.addNote("direction", "first direction"));
             Campaign.PromptNotes captured = Campaign.promptNotes();
@@ -42,6 +44,11 @@ public final class CampaignTest {
                     "{\"position\":{\"x\":1,\"y\":2,\"z\":0}}",
                     captured.directionCount);
             T.ok("valid page commits", committed);
+            T.ok("director plan freezes with first committed page",
+                    Campaign.directorStatusJson().contains("\"frozen\":true"));
+            T.ok("campaign mode locks after page one", !Campaign.setMode("chronicler"));
+            T.ok("private revelations never enter fixed provider prompt",
+                    !Campaign.fixedSpine().contains("first apparent explanation"));
             T.eq("one page visible after commit", 1, Campaign.pageCount());
             T.eq("only captured direction is consumed",
                     List.of("late direction"), Campaign.directions());

@@ -94,7 +94,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "9"
+local NEEDS_API = "10"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -1013,6 +1013,10 @@ end
 --- framework before publishing is a worse trade than owning this screen. It is
 --- also more honest to the object - a 1993 handheld had a setup page.
 local SETUP_ROWS = {
+    { key = "campaignMode", label = "story mode",
+      values = { "chronicler", "director" },
+      names  = { "chronicler", "director" },
+      hint   = "director plans a private long campaign; choose before page one" },
     { key = "knowledge", label = "what the story sees",
       values = { 1, 2, 3 },
       names  = { "just me", "a glance", "glance + memory" },
@@ -1043,7 +1047,7 @@ function PZStoryBook:openSetup()
 end
 
 function PZStoryBook:refreshSettings()
-    self.cfg = { knowledge = 3, words = 200, nudge = 2, doom = 3, pause = true,
+    self.cfg = { campaignMode = "chronicler", knowledge = 3, words = 200, nudge = 2, doom = 3, pause = true,
                  profile = "?", model = "" }
     local f = api("settings")
     if f == nil then return end
@@ -1058,6 +1062,8 @@ function PZStoryBook:refreshSettings()
     self.cfg.doom      = tonumber(data.doom) or 3
     self.cfg.profile   = type(data.profile) == "string" and data.profile or "?"
     self.cfg.model     = type(data.model) == "string" and data.model or ""
+    local mf = api("campaignMode")
+    if mf then pcall(function() self.cfg.campaignMode = mf() or "chronicler" end) end
 end
 
 --- Cycles one setting to its next value and writes it through immediately.
@@ -1072,15 +1078,20 @@ function PZStoryBook:cycleSetting(row)
     local nextV = r.values[(idx % #r.values) + 1]
 
     local fn
-    if r.key == "knowledge" then fn = api("setKnowledge")
+    if r.key == "campaignMode" then fn = api("setCampaignMode")
+    elseif r.key == "knowledge" then fn = api("setKnowledge")
     elseif r.key == "words"  then fn = api("setWords")
     elseif r.key == "nudge"  then fn = api("setNudge")
     elseif r.key == "doom"   then fn = api("setDoom")
     elseif r.key == "pause"  then fn = api("setPause") end
     if fn == nil then return end
-    pcall(function() fn(nextV) end)
+    local changed = true
+    pcall(function()
+        local result = fn(nextV)
+        if r.key == "campaignMode" then changed = result == true end
+    end)
     self:refreshSettings()
-    self.statusLine = r.hint
+    self.statusLine = changed and r.hint or "story mode is locked after page one"
 end
 
 function PZStoryBook:renderSetup(sx, sy, sw, sh)

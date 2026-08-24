@@ -516,6 +516,10 @@ public class StoryAPI {
         return Campaign.setScenario(id);
     }
 
+    public static String campaignMode() { return Campaign.mode(); }
+    public static boolean setCampaignMode(String mode) { return Campaign.setMode(mode); }
+    public static String directorStatus() { return Campaign.directorStatusJson(); }
+
     // -------------------------------------------------------------- to-do
 
     public static String todo()                    { return Campaign.todoJson(); }

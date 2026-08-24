@@ -14,6 +14,7 @@ public final class AllTests {
         RepetitionGuardTest.run();
         ThreadMemoryTest.run();
         ContinuityMemoryTest.run();
+        DirectorBibleTest.run();
         EventJournalTest.run();
         WorldMemoryTest.run();
         TestLabDiagnosticsTest.run();

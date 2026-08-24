@@ -25,7 +25,7 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
-    private static final int CURRENT_SCHEMA = 5;
+    private static final int CURRENT_SCHEMA = 6;
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
@@ -74,6 +74,8 @@ public final class Campaign {
     private static final ContinuityMemory CONTINUITY = new ContinuityMemory();
     private static final EventJournal EVENTS = new EventJournal();
     private static final WorldMemory MEMORY = new WorldMemory();
+    private static final DirectorBible DIRECTOR = new DirectorBible();
+    private static String MODE = "chronicler";
 
     // The player note channel. Three types, three lifetimes - getting the
     // lifetime wrong is the whole failure mode, so they are stored apart
@@ -148,6 +150,8 @@ public final class Campaign {
         SEEN.clear();
         EVENTS.clear();
         MEMORY.clear();
+        DIRECTOR.clear();
+        MODE = "chronicler";
         OPENING = "";
         SCENARIO = "";
         PREMISE = "";
@@ -214,6 +218,13 @@ public final class Campaign {
                 nextOpening = "";
             }
             String nextScenario = field(m, "scenario", 64);
+            String nextMode = schema >= 6 ? field(m, "mode", 16) : "chronicler";
+            if (!nextMode.equals("chronicler") && !nextMode.equals("director"))
+                throw new IllegalStateException("unknown campaign mode " + nextMode);
+            DirectorBible nextDirector = new DirectorBible();
+            if (schema >= 6) nextDirector.load(m.get("directorBible"));
+            if (nextMode.equals("chronicler") && nextDirector.frozen())
+                throw new IllegalStateException("chronicler campaign has a director bible");
             String nextPremise = field(m, "premise", 32000);
             String nextLastState = field(m, "lastState", MAX_LAST_STATE_CHARS);
             String nextObservedState = schema >= 2
@@ -276,6 +287,8 @@ public final class Campaign {
             SEEN.clear(); SEEN.addAll(nextSeen);
             EVENTS.restore(nextEvents.snapshot());
             MEMORY.restore(nextMemory.snapshot());
+            DIRECTOR.restore(nextDirector.snapshot());
+            MODE = nextMode;
             TODO.clear(); TODO.addAll(nextTodo);
             ACHIEVED.clear(); ACHIEVED.addAll(nextAchieved);
             DECLINED.clear(); DECLINED.addAll(nextDeclined);
@@ -344,6 +357,8 @@ public final class Campaign {
         SEEN.clear();
         EVENTS.clear();
         MEMORY.clear();
+        DIRECTOR.clear();
+        MODE = "chronicler";
         TODO.clear();
         ACHIEVED.clear();
         DECLINED.clear();
@@ -425,6 +440,8 @@ public final class Campaign {
             CONTINUITY.write(j);
             j.put("opening", OPENING);
             j.put("scenario", SCENARIO);
+            j.put("mode", MODE);
+            DIRECTOR.write(j);
             j.put("premise", PREMISE);
             j.put("lastState", LAST_STATE);
             j.put("observedState", OBSERVED_STATE);
@@ -860,6 +877,26 @@ public final class Campaign {
         return false;
     }
 
+    public static synchronized String mode() { load(); return MODE; }
+
+    /** One-time opt-in/out before page one. */
+    public static synchronized boolean setMode(String mode) {
+        load();
+        if (!"chronicler".equals(mode) && !"director".equals(mode)) return false;
+        if (!PAGES.isEmpty() || DIRECTOR.frozen()) return MODE.equals(mode);
+        String old = MODE;
+        MODE = mode;
+        if (save()) return true;
+        MODE = old;
+        return false;
+    }
+
+    public static synchronized String directorStatusJson() {
+        load();
+        return new Json().obj().put("mode", MODE)
+                .put("frozen", DIRECTOR.frozen()).endObj().toString();
+    }
+
     /** Maintains a few current-state slots without inferring ownership or safety. */
     private static boolean updateGameFacts(String beforeJson, String afterJson,
                                            List<StoryEvent.Draft> detected,
@@ -1153,12 +1190,16 @@ public final class Campaign {
         List<String> oldTodo = new ArrayList<>(TODO);
         List<String> oldDirections = new ArrayList<>(DIRECTIONS);
         EventJournal.Snapshot oldEvents = EVENTS.snapshot();
+        DirectorBible.Snapshot oldDirector = DIRECTOR.snapshot();
         String oldPremise = PREMISE;
         String oldLastState = LAST_STATE;
 
         if (!addPageInMemory(title, text, stamp)) return false;
         if (PREMISE.isEmpty() && premise != null && !premise.isBlank()) {
             PREMISE = premise.strip();
+        }
+        if ("director".equals(MODE) && !DIRECTOR.frozen()) {
+            DIRECTOR.freeze(Scenario.byId(SCENARIO), PREMISE);
         }
         addCanonInMemory(canon);
         addTodoInMemory(todo, "story");
@@ -1173,6 +1214,7 @@ public final class Campaign {
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
             EVENTS.restore(oldEvents);
+            DIRECTOR.restore(oldDirector);
             PREMISE = oldPremise;
             LAST_STATE = oldLastState;
             Config.log("campaign: page refused - captured event batch is stale");
@@ -1189,6 +1231,7 @@ public final class Campaign {
             TODO.clear(); TODO.addAll(oldTodo);
             DIRECTIONS.clear(); DIRECTIONS.addAll(oldDirections);
             EVENTS.restore(oldEvents);
+            DIRECTOR.restore(oldDirector);
             PREMISE = oldPremise;
             LAST_STATE = oldLastState;
             Config.log("campaign: generated page rolled back after save failure");
@@ -1503,6 +1546,7 @@ public final class Campaign {
             sb.append("and no page may contradict it.\n\n");
             sb.append(PREMISE).append("\n\n");
         }
+        if ("director".equals(MODE)) sb.append(DIRECTOR.publicPrompt());
         return sb.toString();
     }
 
