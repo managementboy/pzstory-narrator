@@ -14,6 +14,31 @@ public final class Json {
     private final StringBuilder sb = new StringBuilder(4096);
     private boolean needComma = false;
 
+    /** A cheap writer transaction used by independently optional state blocks. */
+    public static final class Checkpoint {
+        private final int length;
+        private final boolean needComma;
+
+        private Checkpoint(int length, boolean needComma) {
+            this.length = length;
+            this.needComma = needComma;
+        }
+    }
+
+    public Checkpoint checkpoint() {
+        return new Checkpoint(sb.length(), needComma);
+    }
+
+    /** Discards everything written after the checkpoint. */
+    public Json rollback(Checkpoint checkpoint) {
+        if (checkpoint == null || checkpoint.length > sb.length()) {
+            throw new IllegalArgumentException("invalid JSON writer checkpoint");
+        }
+        sb.setLength(checkpoint.length);
+        needComma = checkpoint.needComma;
+        return this;
+    }
+
     public Json obj() {
         comma();
         sb.append('{');
@@ -110,6 +135,18 @@ public final class Json {
         sb.append('"');
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
+            if (Character.isHighSurrogate(c)) {
+                if (i + 1 >= s.length() || !Character.isLowSurrogate(s.charAt(i + 1))) {
+                    throw new IllegalArgumentException(
+                            "cannot encode an unpaired high unicode surrogate");
+                }
+                sb.append(c).append(s.charAt(++i));
+                continue;
+            }
+            if (Character.isLowSurrogate(c)) {
+                throw new IllegalArgumentException(
+                        "cannot encode an unpaired low unicode surrogate");
+            }
             switch (c) {
                 case '"'  -> sb.append("\\\"");
                 case '\\' -> sb.append("\\\\");
@@ -143,11 +180,16 @@ public final class Json {
     private static void write(StringBuilder b, Object o) {
         if (o == null) { b.append("null"); return; }
         if (o instanceof String s) { b.append(new Json().quoted(s)); return; }
-        if (o instanceof Boolean || o instanceof Number) {
+        if (o instanceof Number n) {
+            double value = n.doubleValue();
+            if (!Double.isFinite(value)) {
+                throw new IllegalArgumentException("cannot encode a non-finite JSON number");
+            }
             String t = String.valueOf(o);
             b.append(t.endsWith(".0") ? t.substring(0, t.length() - 2) : t);
             return;
         }
+        if (o instanceof Boolean) { b.append(o); return; }
         if (o instanceof java.util.Map<?, ?> m) {
             b.append('{');
             boolean first = true;

@@ -32,6 +32,10 @@ public final class JsonParse {
     private int depth;
     private static final int MAX_DEPTH = 200;
     private static final int MAX_INPUT_CHARS = 32 * 1024 * 1024;
+    private static final int MAX_STRING_CHARS = 1024 * 1024;
+    private static final int MAX_CONTAINER_ENTRIES = 100_000;
+    private static final int MAX_VALUES = 250_000;
+    private int values;
 
     private JsonParse(String s) {
         this.s = s;
@@ -64,6 +68,10 @@ public final class JsonParse {
     }
 
     private Object value() {
+        if (++values > MAX_VALUES) {
+            throw new IllegalStateException("json contains more than "
+                    + MAX_VALUES + " values");
+        }
         if (i >= s.length()) throw new IllegalStateException("unexpected end of input");
         char c = s.charAt(i);
         switch (c) {
@@ -92,11 +100,18 @@ public final class JsonParse {
         while (true) {
             ws();
             String k = string();
+            if (m.containsKey(k)) {
+                throw new IllegalStateException("duplicate object key at offset " + i);
+            }
             ws();
             if (peek() != ':') throw new IllegalStateException("expected ':' at offset " + i);
             i++;
             ws();
             m.put(k, value());
+            if (m.size() > MAX_CONTAINER_ENTRIES) {
+                throw new IllegalStateException("object has more than "
+                        + MAX_CONTAINER_ENTRIES + " entries");
+            }
             ws();
             char c = peek();
             if (c == ',') { i++; continue; }
@@ -113,6 +128,10 @@ public final class JsonParse {
         while (true) {
             ws();
             l.add(value());
+            if (l.size() > MAX_CONTAINER_ENTRIES) {
+                throw new IllegalStateException("array has more than "
+                        + MAX_CONTAINER_ENTRIES + " entries");
+            }
             ws();
             char c = peek();
             if (c == ',') { i++; continue; }
@@ -128,12 +147,20 @@ public final class JsonParse {
         while (true) {
             if (i >= s.length()) throw new IllegalStateException("unterminated string");
             char c = s.charAt(i++);
-            if (c == '"') return sb.toString();
+            if (c == '"') {
+                String value = sb.toString();
+                validateSurrogates(value);
+                return value;
+            }
             if (c < 0x20) {
                 throw new IllegalStateException(
                         "unescaped control character at offset " + (i - 1));
             }
-            if (c != '\\') { sb.append(c); continue; }
+            if (c != '\\') {
+                sb.append(c);
+                if (sb.length() > MAX_STRING_CHARS) throw stringTooLong();
+                continue;
+            }
             if (i >= s.length()) throw new IllegalStateException("unterminated escape");
             char e = s.charAt(i++);
             switch (e) {
@@ -156,11 +183,33 @@ public final class JsonParse {
                         throw new IllegalStateException("bad unicode escape at offset " + i);
                     }
                     sb.append((char) code);
+                    if (sb.length() > MAX_STRING_CHARS) throw stringTooLong();
                     i += 4;
                 }
                 default -> throw new IllegalStateException("bad escape \\" + e);
             }
+            if (sb.length() > MAX_STRING_CHARS) throw stringTooLong();
         }
+    }
+
+    private static void validateSurrogates(String value) {
+        for (int at = 0; at < value.length(); at++) {
+            char c = value.charAt(at);
+            if (Character.isHighSurrogate(c)) {
+                if (at + 1 >= value.length()
+                        || !Character.isLowSurrogate(value.charAt(at + 1))) {
+                    throw new IllegalStateException("unpaired high unicode surrogate");
+                }
+                at++;
+            } else if (Character.isLowSurrogate(c)) {
+                throw new IllegalStateException("unpaired low unicode surrogate");
+            }
+        }
+    }
+
+    private static IllegalStateException stringTooLong() {
+        return new IllegalStateException("json string exceeds "
+                + MAX_STRING_CHARS + " characters");
     }
 
     private Double number() {

@@ -20,6 +20,9 @@ public final class JsonParseTest {
         reject("incomplete escape", "{\"x\":\"abc\\", "escape");
         reject("short unicode escape", "{\"x\":\"\\u12\"}", "unicode");
         reject("non-hex unicode escape", "{\"x\":\"\\u12xz\"}", "unicode");
+        reject("unpaired high surrogate", "{\"x\":\"\\ud800\"}", "surrogate");
+        reject("unpaired low surrogate", "{\"x\":\"\\udc00\"}", "surrogate");
+        reject("duplicate object key", "{\"x\":1,\"x\":2}", "duplicate");
 
         T.group("JsonParse - non-JSON numbers are rejected");
         reject("leading plus", "+1", "number");
@@ -41,6 +44,22 @@ public final class JsonParseTest {
         Map<String, Object> roundTrip = JsonParse.parseObject(encoded);
         T.eq("escaped string", "a\"b\\c\n", roundTrip.get("quote"));
         T.eq("finite decimal", Double.valueOf(12.25), roundTrip.get("finite"));
+        T.throwsWith("writer refuses NaN", "non-finite",
+                () -> Json.of(java.util.Map.of("n", Double.NaN)));
+        T.throwsWith("writer refuses an unpaired surrogate", "surrogate", () ->
+                new Json().obj().put("bad", String.valueOf((char) 0xd800)));
+        String emoji = Character.toString(0x1f642);
+        String emojiJson = new Json().obj().put("emoji", emoji).endObj().toString();
+        T.eq("writer preserves paired surrogates", emoji,
+                JsonParse.parseObject(emojiJson).get("emoji"));
+
+        Json transactional = new Json().obj().put("kept", true);
+        Json.Checkpoint checkpoint = transactional.checkpoint();
+        transactional.objKey("broken").put("partial", true);
+        transactional.rollback(checkpoint).put("after", "ok").endObj();
+        Map<String, Object> rolledBack = JsonParse.parseObject(transactional.toString());
+        T.ok("writer rollback removes partial section", !rolledBack.containsKey("broken"));
+        T.eq("writer remains usable after rollback", "ok", rolledBack.get("after"));
     }
 
     private static void reject(String what, String json, String message) {

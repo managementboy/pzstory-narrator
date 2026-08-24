@@ -1,7 +1,7 @@
 --[[
   PZStory - Phase 2 harness.
 
-  F9  - dump the game-state snapshot to console
+  F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
 
   There is still no UI. The point of this file is to prove the whole chain
@@ -12,7 +12,7 @@
 ]]
 
 local TAG = "[PZStoryProbe] "
-local SNAPSHOT_BIND = "PZStory: snapshot to log"
+local SNAPSHOT_BIND = "PZStory: provider state to log"
 local TEST_BIND     = "PZStory: model self-test"
 
 local function say(...)
@@ -43,18 +43,18 @@ local function takeSnapshot(why)
         notify("PZStory: bridge not loaded", false)
         return
     end
-    -- The production bridge returns the snapshot but never writes private game
-    -- state to console.txt on its own. This optional dev harness makes that
-    -- privacy-sensitive choice explicit at the point where F9 is handled.
+    -- Print the same minimised live-state block used in a provider request,
+    -- not the raw local snapshot with exact coordinates and diagnostics. It is
+    -- still private (name, inventory, wounds), so this stays an explicit probe.
     local snapshot
-    local ok, err = pcall(function() snapshot = PZStory.snapshot() end)
+    local ok, err = pcall(function() snapshot = PZStory.providerPreview() end)
     if ok then
-        print("[PZStorySnapshot] " .. tostring(snapshot or ""))
-        say("snapshot written to console (" .. why .. ")")
-        notify("PZStory: snapshot written", true)
+        print("[PZStoryProviderState] " .. tostring(snapshot or ""))
+        say("provider state written to console (" .. why .. ")")
+        notify("PZStory: provider state written", true)
     else
-        say("snapshot FAILED (" .. why .. "): " .. tostring(err))
-        notify("PZStory: snapshot failed", false)
+        say("provider state FAILED (" .. why .. "): " .. tostring(err))
+        notify("PZStory: provider state failed", false)
     end
 end
 

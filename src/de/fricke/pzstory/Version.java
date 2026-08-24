@@ -8,7 +8,7 @@ package de.fricke.pzstory;
  * RELEASE is for people: it changes when anything ships, including a comment
  * or a prompt tweak, and it is what appears in mod.info and in the log.
  *
- * API is for the Lua/Java bridge: it changes ONLY when the surface Lua calls
+ * API is for the Lua/Java bridge: it changes when the surface Lua calls
  * changes - a method added, removed, renamed, or given different semantics.
  * Lua refuses to run against a JAR whose API version it does not recognise,
  * because the alternative is a NullPointerException once per frame with the
@@ -33,16 +33,20 @@ public final class Version {
      * Human-facing release. Bump for any shipped change.
      * MUST equal modversion in mod/42/mod.info.
      */
-    public static final String RELEASE = "1.24.0";
+    public static final String RELEASE = "1.25.0-rc1";
 
     /**
-     * Lua/Java bridge compatibility. Bump ONLY on a breaking bridge change.
+     * Lua/Java bridge compatibility. Bump when production Lua depends on a
+     * new method, payload field, status, or changed method semantics.
      * MUST equal NEEDS_API in PZStoryBook.lua, compared for EXACT equality.
      *
      * History:
      *   1  everything up to and including release 1.23.1
-     *   2  release 1.24.0 - added apiVersion(), archiveTitle(), archiveText(),
-     *      archiveStamp(), streamError(), streamFailKind(), streamRetryAfter()
+     *   2  release 1.24.0 - added apiVersion() and exact compatibility checks
+     *   3  release 1.24.0 audit hardening - strict structured bridge payloads
+     *      and normalised stream metric field names
+     *   4  release 1.25.0-rc1 - transactional completion states, STOP handling,
+     *      and providerPreview()
      */
-    public static final String API = "3";
+    public static final String API = "4";
 }

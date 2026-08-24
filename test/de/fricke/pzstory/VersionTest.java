@@ -27,6 +27,11 @@ public final class VersionTest {
         // reporting 1.23.10 satisfy a Lua that required 1.23.1.
         T.ok("Lua no longer prefix-matches", !lua.contains("v:sub(1, #NEEDS"));
         T.ok("Lua compares API exactly", lua.contains("api ~= NEEDS_API"));
+
+        String verify = read("tools/verify.sh");
+        T.ok("verifier checks source-to-jar completeness",
+                verify.contains("every source class is in the jar")
+                        && verify.contains("MISSING_FROM_JAR"));
     }
 
     private static String read(String path) {

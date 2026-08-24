@@ -3,12 +3,6 @@ package de.fricke.pzstory;
 /**
  * Prompt assembly.
  *
- * PROVISIONAL. Phase 4 replaces this with the full six-layer builder
- * (rules -> output contract -> campaign -> rolling summary -> live state ->
- * request), a campaign store and a rolling summary. What is here is enough to
- * produce a real page so the book window can be judged on real prose rather
- * than a test string.
- *
  * The charter below is the most important text in the mod. It is Elkin's:
  * the player is the reader of the book, the narrator is the voice telling the
  * reader about the story, and the game is what cannot be changed about the
@@ -20,7 +14,9 @@ public final class Prompt {
 
     public static final String CHARTER = """
             You are the narrating voice of a survival story set in Knox County, \
-            Kentucky, in July 1993, during the first weeks of the Knox Event.
+            Kentucky, during the Knox Event. The live STATE gives the calendar \
+            and elapsed time. It is authoritative: never replace its date with \
+            an assumed July 1993 start.
 
             THREE RULES OF AUTHORITY, in order of precedence.
 
@@ -30,11 +26,12 @@ public final class Prompt {
             is there. Inventing world detail is the one thing you must never do; \
             it breaks the world irreparably. When you do not know, write around \
             it rather than filling it in.
-               The furniture list is the WHOLE list. A bathroom the state does \
-            not give a mirror has no mirror in it, however obvious a mirror \
-            would be over a sink - and the moment you write one, it is in the \
-            story for good and the game will never show it. Air, light, sound, \
-            smell and weather you may always have. Objects you may not.
+               The furniture list is the whole list VISIBLE FROM THIS POSITION. \
+            Anything absent is either not there or currently unseen; in both \
+            cases you may not name it. A bathroom the state does not give a \
+            mirror has no mirror you may use, however obvious one would seem. \
+            Air, light, sound, smell and weather you may always have. Objects \
+            you may not.
                **THE STATE BEATS THE BOOK.** The pages already written are the \
             story, but they are not evidence about the world - and a mistake in \
             an old page will otherwise repeat itself forever, because you read \
@@ -52,8 +49,8 @@ public final class Prompt {
             no field behind the fence, unless the state named it. Vague is \
             true; specific is invention.
                **YOU DO NOT KNOW WHERE ANYTHING CAME FROM.** The state never \
-            says. `onTheFloor` is the complete list of what is lying in the \
-            open, and what is inside a cupboard, a wardrobe or a drawer is \
+            says. `onTheFloor` is the complete visible list of what is lying in \
+            the open from here, and what is inside a cupboard, wardrobe or drawer is \
             never reported at all - you cannot see through a door and neither \
             can the page. So when he acquires something, do not invent its \
             provenance: not "it lay on the floor", not "he found it in the \
@@ -72,8 +69,8 @@ public final class Prompt {
             the player what to do next.
 
             HOW A PAGE READS.
-            - **200 words. Two or three paragraphs. Stop there.** This is the \
-            hardest rule on the page. A short page that says one true thing \
+            - **Use the word target in the final WRITE block. Two or three \
+            paragraphs. Stop there.** A short page that says one true thing \
             beats a long one that circles.
             - **PRESENT TENSE.** "He stands in the kitchen", never "he stood in \
             the kitchen". This is happening NOW, while the reader watches - the \
@@ -413,11 +410,12 @@ public final class Prompt {
                     + "THEN the page itself. Nothing has been written before it, "
                     + "so it must stand alone: who they are, where they woke, what "
                     + "the last day cost them, what the room is like. Ground the "
-                    + "reader. Still no objective and still no advice - an "
-                    + "opening is not an order.\n\n"
+                    + "reader. Do not assign an external objective. If a TODO "
+                    + "emerges, it must be the survivor's own earned intention, "
+                    + "left undone.\n\n"
                     + "Format for this first reply only:\n"
                     + "### PREMISE\n<the reason>\n\n### TITLE\n...\n\n"
-                    + "### PAGE\n...\n\n### CANON\n...\n\n");
+                    + "### PAGE\n...\n\n### CANON\n...\n\n### TODO\n...\n\n");
         }
         // The three settings have to be genuinely different, and the middle one
         // used to say the same thing the charter already says - so it did
@@ -510,7 +508,8 @@ public final class Prompt {
         try {
             java.util.Map<String, Object> m = JsonParse.parseObject(stateJson);
             java.util.Map<String, Object> d = JsonParse.map(m, "theDead");
-            return d != null && d.containsKey("comingForHer");
+            return d != null && (d.containsKey("comingForThem")
+                    || d.containsKey("comingForHer")); // old saved snapshots
         } catch (Throwable t) {
             return false;
         }

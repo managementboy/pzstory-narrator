@@ -5,9 +5,10 @@ worth being explicit about what it does and what was checked.
 
 ## What it sends, and where
 
-On every page: a JSON snapshot of your character and surroundings, the pages
-written so far in this save, and the prompt. It goes to **exactly one place** —
-the provider named in the active profile in `Zomboid/pzstory/profiles.json`.
+On every page: a minimised JSON projection of your character and visible
+surroundings, the pages written so far in this save, canon and player notes,
+sandbox rules, and the prompt. It goes to **exactly one place** — the provider
+named in the active profile in `Zomboid/pzstory/profiles.json`.
 There is no telemetry, no analytics, no second endpoint, and no phone-home. The
 only outbound requests in the codebase are the ones in `Llm.java`, to the
 `baseUrl` you configured.
@@ -29,11 +30,70 @@ record in two passes: the exact keys currently loaded, then a generic sweep for
 body. Control characters are escaped and records are length-limited so an
 untrusted error cannot forge additional log lines.
 
-The optional development probe can print a complete snapshot when you press
-F9. That snapshot contains the character name, exact position and inventory.
-Always review `console.txt` before sharing it; redaction is a defence in depth,
-not a promise that every possible private value or future provider key format
-can be identified automatically.
+The optional development probe can print the provider-facing live-state block
+when you press F9. It omits exact position and local diagnostics, but still
+contains the character name, inventory, wounds and surroundings. Always review
+`console.txt` before sharing it; redaction is a defence in depth, not a promise
+that every possible private value or future provider key format can be
+identified automatically.
+
+## Live-safety integration, August 2026 (release 1.25.0-rc1)
+
+This release candidate integrates the audit branch and closes the correctness
+gaps that could still damage a real campaign while a request was finishing:
+
+- **Validated, transactional completion.** Network completion now enters
+  `RECEIVED`, then strict reply validation and a single durable campaign commit,
+  and only then `DONE`. Every required heading must be present and ordered;
+  missing premise/title/page/canon/TODO, duplicate or unknown sections,
+  placeholder titles, partial prose and oversized sections are rejected. An
+  invalid reply changes no page, premise, canon, TODO, direction or last-state
+  snapshot.
+- **Persistence rollback and recovery.** A failed campaign write rolls every
+  in-memory mutation back. The last valid file is rotated to
+  `campaign.json.bak`; an unreadable primary is preserved as
+  `campaign.json.corrupt-*` and the backup is attempted once. Unsupported
+  campaign schemas fail closed instead of being interpreted as the current
+  format.
+- **Truthful cancellation.** The device exposes STOP while streaming. A stop
+  closes the response body, holds the single-worker slot until it unwinds, and
+  clearly reports that the incomplete response was discarded. Once the short
+  atomic disk commit begins it is allowed to finish rather than pretending a
+  durable write was cancelled.
+- **Provider data minimisation.** The raw snapshot remains local for delta and
+  save continuity. The provider state removes account username, exact map
+  coordinates, engine/room ids, diagnostics, raw stat and nutrition telemetry,
+  exact health values, exact skill XP and exact Celsius temperature. Broad
+  narrative meaning remains. The locally computed change summary also bands
+  elapsed time, movement, skill progress and kills instead of forwarding exact
+  telemetry. F9 in the optional probe shows the live-state projection.
+- **Current visibility, not loaded world.** Room contents and standing zombies
+  are filtered by the current player visibility flag. Occluded squares are
+  absent. A zombie already pursuing the survivor remains urgent even just out
+  of sight, without being mislabelled as visible.
+- **Exact interval identity.** Any movement now invalidates “still standing,”
+  including a single tile or floor. Same-named rooms use stable local identity
+  where available. Same-named bags use engine ids locally, so acquiring one
+  full bag is not rewritten as individually looting every item inside it; ids
+  are removed before provider transmission.
+- **Defensive JSON assembly.** Optional state sections use writer checkpoints,
+  so an engine/mod exception cannot leave a half-open object that poisons the
+  entire snapshot. The parser rejects duplicate keys, unpaired Unicode
+  surrogates, malformed UTF-8, excessive string/container/value counts and
+  non-finite numbers.
+  A snapshot that reports an error or lacks core character/position data is
+  refused before a provider request or campaign commit begins.
+- **Compatibility controls.** OpenAI-compatible profiles can opt into stream
+  usage figures and select `max_tokens` or `max_completion_tokens`. Gemini and
+  Anthropic reasoning budgets are explicit. See `docs/PROVIDERS.md`.
+- **Binary freshness gate.** Release verification now requires every top-level
+  source class to be present in the JAR as well as every JAR class to have
+  source. This detects a previously invisible stale-binary failure mode.
+
+The live-test procedure and negative acceptance checks are in
+`docs/LIVE_TESTING.md`. Use a copied save and a locally rebuilt JAR; the bridge
+API was advanced to 4 so a stale 1.24.0 binary is refused rather than silently
+running without these protections.
 
 ## Audit, August 2026 — second pass (release 1.24.0)
 

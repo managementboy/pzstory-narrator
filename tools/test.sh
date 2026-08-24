@@ -16,11 +16,20 @@ fi
 # checks listed in dev/README.md, not here.
 UNITS="src/de/fricke/pzstory/AtomicFiles.java \
 src/de/fricke/pzstory/BoundedFiles.java \
+src/de/fricke/pzstory/Campaign.java \
+src/de/fricke/pzstory/Config.java \
+src/de/fricke/pzstory/Delta.java \
 src/de/fricke/pzstory/Endpoint.java \
 src/de/fricke/pzstory/Json.java \
 src/de/fricke/pzstory/JsonParse.java \
+src/de/fricke/pzstory/Llm.java \
+src/de/fricke/pzstory/NarrativeState.java \
+src/de/fricke/pzstory/PageResult.java \
+src/de/fricke/pzstory/Scenario.java \
+src/de/fricke/pzstory/Settings.java \
 src/de/fricke/pzstory/Version.java"
 
 rm -rf build/test && mkdir -p build/test
-"$JDK/javac" -encoding UTF-8 -Xlint:all -d build/test $UNITS test/de/fricke/pzstory/*.java
+"$JDK/javac" -encoding UTF-8 -Xlint:all -d build/test $UNITS \
+    test/zombie/ZomboidFileSystem.java test/de/fricke/pzstory/*.java
 "$JDK/java" -cp build/test de.fricke.pzstory.AllTests

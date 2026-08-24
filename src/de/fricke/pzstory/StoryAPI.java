@@ -23,7 +23,7 @@ public class StoryAPI {
         // Kahlua wants a public no-arg constructor.
     }
 
-    /** Human-facing release, e.g. "1.24.0". For display and bug reports. */
+    /** Human-facing release, e.g. "1.25.0-rc1". For display and bug reports. */
     public static String version() {
         return Version.RELEASE;
     }
@@ -60,6 +60,15 @@ public class StoryAPI {
             return StateReader.snapshot();
         } catch (Throwable t) {
             return "{\"error\":\"snapshot threw " + t.getClass().getSimpleName() + "\"}";
+        }
+    }
+
+    /** Exactly the live-state projection placed in a provider request. */
+    public static String providerPreview() {
+        try {
+            return NarrativeState.fromRaw(StateReader.snapshot());
+        } catch (Throwable t) {
+            return "{\"error\":\"provider preview failed\"}";
         }
     }
 
@@ -148,6 +157,13 @@ public class StoryAPI {
         } catch (Throwable t) {
             return "could not read the game state: " + t.getClass().getSimpleName();
         }
+        final String narrativeState;
+        try {
+            narrativeState = NarrativeState.fromRaw(state);
+        } catch (Throwable t) {
+            return "could not prepare a privacy-safe game state: "
+                    + t.getClass().getSimpleName();
+        }
 
         // New-game handshake, captured once from the very first page's state.
         if (!Campaign.hasOpening()) Campaign.openIfNew(opening(state));
@@ -155,16 +171,21 @@ public class StoryAPI {
         Config.Profile p = Config.active();
 
         // The player's voice: standing preferences restated every time, plus
-        // any directions filed since the last page.
-        String voice = Campaign.todoForPrompt() + Campaign.notesForPrompt();
+        // the exact batch of one-shot directions this request will consume.
+        // A direction filed while the provider is working belongs to the next
+        // page and survives this one's commit.
+        Campaign.PromptNotes capturedNotes = Campaign.promptNotes();
+        String voice = Campaign.todoForPrompt() + capturedNotes.text;
 
         // A note the player has only just written gets its own heading. Folded
         // in with the rest it would be one bullet among many - and the whole
         // point of writing it was to be answered NOW.
         if (notes != null && !notes.isBlank()) {
-            String fresh = "The player has just written this in his notebook, "
+            String boundedNote = notes.strip();
+            if (boundedNote.length() > 500) boundedNote = boundedNote.substring(0, 500);
+            String fresh = "The player has just written this in their notebook, "
                     + "moments ago, and is waiting to see it answered:\n\n"
-                    + notes.strip()
+                    + boundedNote
                     + "\n\nLet this page take it up directly. Do not quote it back "
                     + "or acknowledge it as a message; simply let the story show "
                     + "that it landed.\n";
@@ -180,8 +201,10 @@ public class StoryAPI {
                 + World.RULES + "\n\n" + World.KNOX
                 + "\n\n" + StateReader.sandbox() + "\n\n"
                 + Campaign.fixedSpine();
+        final boolean firstPage = Campaign.pageCount() == 0;
+        final int targetWords = Settings.words();
         String tailPrompt = Prompt.userTurn(
-                state, voice, change, Campaign.pageCount() == 0,
+                narrativeState, voice, change, firstPage,
                 Delta.stillStanding(Campaign.lastState(), state));
 
         // Input tokens cost money and the archive grows indefinitely. Reserve
@@ -212,15 +235,26 @@ public class StoryAPI {
                     // All campaign consequences cross one generation check
                     // and one persistence boundary. A save load cannot land
                     // between the check and these mutations.
-                    Campaign.commitGeneratedPage(
+                    final PageResult result;
+                    try {
+                        result = PageResult.parse(all, firstPage, targetWords);
+                    } catch (PageResult.Invalid invalid) {
+                        return Llm.CompletionResult.failure("invalid_output",
+                                "the model reply was not saved: " + invalid.getMessage());
+                    }
+                    boolean stored = Campaign.commitGeneratedPage(
                             generation,
-                            Prompt.premise(all),
-                            Prompt.title(all),
-                            Prompt.body(all),
+                            result.premise,
+                            result.title,
+                            result.page,
                             stamp,
-                            Prompt.canon(all),
-                            Prompt.todo(all),
-                            stateNow);
+                            result.canon,
+                            result.todo,
+                            stateNow,
+                            capturedNotes.directionCount);
+                    return stored ? null : Llm.CompletionResult.failure("save",
+                            "the page was valid but the campaign file could not be saved; "
+                                    + "the old campaign is unchanged");
                 });
         if (err != null) Config.log("requestStoryPage refused: " + err);
         return err;
@@ -394,10 +428,10 @@ public class StoryAPI {
 
     public static String todo()                    { return Campaign.todoJson(); }
     public static boolean addTodo(String text)     { return Campaign.addTodo(text, "player"); }
-    public static void toggleTodo(int oneBased)    { Campaign.toggleTodo(oneBased); }
-    public static void clearDoneTodo()             { Campaign.clearDoneTodo(); }
-    public static void dropTodo(int oneBased)      { Campaign.dropTodo(oneBased); }
-    public static void laterTodo(int oneBased)     { Campaign.laterTodo(oneBased); }
+    public static boolean toggleTodo(int oneBased) { return Campaign.toggleTodo(oneBased); }
+    public static boolean clearDoneTodo()          { return Campaign.clearDoneTodo(); }
+    public static boolean dropTodo(int oneBased)   { return Campaign.dropTodo(oneBased); }
+    public static boolean laterTodo(int oneBased)  { return Campaign.laterTodo(oneBased); }
 
     // ----------------------------------------------------------- settings
 

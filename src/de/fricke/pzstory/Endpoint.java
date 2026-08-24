@@ -6,8 +6,8 @@ import java.net.URISyntaxException;
 /**
  * Where this mod is allowed to send a request.
  *
- * EVERY page carries private game state: the survivor's name, their exact
- * position, their inventory, the player's own notes and the whole campaign so
+ * EVERY page carries private game state: the survivor's name, their current
+ * situation, their inventory, the player's own notes and the whole campaign so
  * far. Sending that in clear text over a network is a privacy failure whether
  * or not an API key rides along with it, which is why the rule here is about
  * the TRANSPORT and not about whether a credential is present.
@@ -58,6 +58,7 @@ public final class Endpoint {
 
     /** Thrown when an endpoint is not permitted. The message reaches the player. */
     public static final class Rejected extends RuntimeException {
+        private static final long serialVersionUID = 1L;
         public Rejected(String why) { super(why); }
     }
 

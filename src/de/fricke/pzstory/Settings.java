@@ -74,7 +74,9 @@ public final class Settings {
             int nextZoom = JsonParse.num(m, "zoom", 0);
             int nextKnowledge = clampKnow(JsonParse.num(m, "knowledge", KNOW_MEMORY));
             int nextWords = Math.max(100, Math.min(400, JsonParse.num(m, "words", 200)));
-            boolean nextPause = !"false".equals(JsonParse.str(m, "pauseOnOpen", "true"));
+            Object pauseValue = m.get("pauseOnOpen");
+            boolean nextPause = pauseValue instanceof Boolean b ? b
+                    : !"false".equals(String.valueOf(pauseValue));
             String nextProfile = JsonParse.str(m, "profile", "");
             int nextNudge = Math.max(1, Math.min(3, JsonParse.num(m, "nudge", 2)));
             int nextDoom = Math.max(1, Math.min(3,
@@ -105,7 +107,7 @@ public final class Settings {
             j.put("zoom", zoom);
             j.put("knowledge", knowledge);
             j.put("words", words);
-            j.put("pauseOnOpen", pauseOnOpen ? "true" : "false");
+            j.put("pauseOnOpen", pauseOnOpen);
             j.put("profile", profile);
             j.put("nudge", nudge);
             j.put("doom", doom);

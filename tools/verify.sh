@@ -54,6 +54,7 @@ echo "== committed jar =="
 if [ ! -f "$JAR" ]; then
     bad "jar present" "missing"
 else
+    JAR_ENTRIES=$(unzip -Z1 "$JAR")
     JAR_REL=$(unzip -p "$JAR" de/fricke/pzstory/Version.class 2>/dev/null \
               | strings | grep -xE '[0-9]+\.[0-9]+\.[0-9]+[-A-Za-z0-9.]*' | head -1 || true)
     if [ "$JAR_REL" = "$REL_JAVA" ]; then good "jar release matches source" "$JAR_REL"
@@ -81,6 +82,21 @@ else
     done < <(unzip -Z1 "$JAR" | sed -n 's#^de/fricke/pzstory/\([^/]*\)\.class$#\1#p')
     if [ -z "$UNBACKED" ]; then good "every jar class is source-backed" "clean"
     else bad "every jar class is source-backed" "missing source for: $UNBACKED"; fi
+
+    # The reverse direction matters just as much. The August integration branch
+    # exposed a stale binary containing only the older 22-class runtime: every
+    # class in that JAR had source, but newly added AtomicFiles/BoundedFiles were
+    # absent, so the check above still passed. A source file omitted from the
+    # release binary means the installed mod is not the reviewed code.
+    MISSING_FROM_JAR=""
+    while IFS= read -r source; do
+        top="$(basename "$source" .java)"
+        if ! grep -Fqx "de/fricke/pzstory/$top.class" <<< "$JAR_ENTRIES"; then
+            MISSING_FROM_JAR="${MISSING_FROM_JAR}${top} "
+        fi
+    done < <(find "$SRC" -maxdepth 1 -name '*.java' | LC_ALL=C sort)
+    if [ -z "$MISSING_FROM_JAR" ]; then good "every source class is in the jar" "clean"
+    else bad "every source class is in the jar" "missing binary for: $MISSING_FROM_JAR"; fi
 
     if unzip -t "$JAR" >/dev/null 2>&1; then good "jar integrity" "zip ok"
     else bad "jar integrity" "corrupt archive"; fi

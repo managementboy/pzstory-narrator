@@ -77,7 +77,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "3"
+local NEEDS_API = "4"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -759,9 +759,14 @@ function PZStoryBook:addTask()
     end
     local ok = false
     pcall(function() ok = f(t) end)
-    self.entry:clear()
-    self:refreshTasks()
-    self.statusLine = ok and "added" or "already on the list"
+    if ok then
+        self.entry:clear()
+        self:refreshTasks()
+        self.statusLine = "added"
+    else
+        -- Keep the text so a transient disk failure can be retried.
+        self.statusLine = "not added - duplicate, full, or not saved"
+    end
 end
 
 function PZStoryBook:renderTasks(sx, sy, sw, sh)
@@ -1113,6 +1118,10 @@ end
 
 function PZStoryBook:openNote()
     if self.mismatch then return end
+    if self.streaming then
+        self.statusLine = "stop or finish this page before editing notes"
+        return
+    end
     self.mode = "note"
     self:refreshStanding()
     if self.entry then
@@ -1160,6 +1169,15 @@ function PZStoryBook:saveNote()
         return
     end
 
+    local accepted = result == "kept as canon"
+                  or result == "already kept as canon"
+                  or result == "will steer the next page"
+                  or result == "in force until you remove it"
+    if not accepted then
+        self.statusLine = tostring(result or "could not keep that note")
+        return
+    end
+
     self.entry:clear()
     self:refreshStanding()
 
@@ -1168,7 +1186,10 @@ function PZStoryBook:saveNote()
         -- the page, and let the story take it up straight away - the whole
         -- reason for writing it was to see it land.
         self:closeNote()
-        self:writePage(text)
+        -- addNote() has already put this observation/direction into the exact
+        -- campaign prompt channel. Passing the same text again made the model
+        -- receive it twice, once as a note and once as a fresh message.
+        self:writePage()
     else
         -- A dial. Confirm it and stay put; it takes effect from the next page.
         self.statusLine = tostring(result or "kept")
@@ -1489,6 +1510,9 @@ function PZStoryBook:renderSoftKeys()
     elseif self.mode == "setup" then
         labels = { "DONE" }
     else
+        if self.streaming then
+            labels = { "STOP" }
+        else
         -- No CLOSE. Switching the device off is the power button on the case,
         -- where it cannot be hit by accident while reading.
         -- While a provider hold is running the first key counts it down, so
@@ -1496,6 +1520,7 @@ function PZStoryBook:renderSoftKeys()
         local held = self:heldFor()
         labels = { held > 0 and ("WAIT " .. held) or "WRITE",
                    "NOTE", "TO DO", "SETUP" }
+        end
     end
 
     if #labels == 0 then self.buttons = {} return end
@@ -1536,7 +1561,12 @@ function PZStoryBook:onMouseDown(x, y)
                 local which = r.drop and "dropTodo"
                             or (r.later and "laterTodo" or "toggleTodo")
                 local f = api(which)
-                if f then pcall(function() f(r.idx) end) end
+                local kept = false
+                if f then pcall(function() kept = f(r.idx) == true end) end
+                if not kept then
+                    self.statusLine = "could not save that change"
+                    return true
+                end
                 self:refreshTasks()
                 self.statusLine = r.drop and "struck off - it will not come back"
                     or (r.later and "shelved - kept, but not chased"
@@ -1569,9 +1599,14 @@ function PZStoryBook:onMouseDown(x, y)
             if hit(r, x, y) then
                 local f = api("removeStanding")
                 if f then
-                    pcall(function() f(r.idx) end)
-                    self:refreshStanding()
-                    self.statusLine = "cancelled"
+                    local removed = false
+                    pcall(function() removed = f(r.idx) == true end)
+                    if removed then
+                        self:refreshStanding()
+                        self.statusLine = "cancelled"
+                    else
+                        self.statusLine = "could not save that change"
+                    end
                 end
                 return true
             end
@@ -1627,14 +1662,23 @@ function PZStoryBook:onMouseUp(x, y)
                 if b.id == 1 then self:addTask()
                 elseif b.id == 2 then
                     local f = api("clearDoneTodo")
-                    if f then pcall(f) end
-                    self:refreshTasks()
-                    self.statusLine = "cleared"
+                    local cleared = false
+                    if f then pcall(function() cleared = f() == true end) end
+                    if cleared then
+                        self:refreshTasks()
+                        self.statusLine = "cleared"
+                    else
+                        self.statusLine = "could not save that change"
+                    end
                 elseif b.id == 3 then self:closeTasks() end
             elseif self.mode == "setup" then
                 self:home()
             else
-                if b.id == 1 then self:writePage()
+                if b.id == 1 and self.streaming then
+                    local f = api("cancelPage")
+                    if f then pcall(f) end
+                    self.statusLine = "stopping..."
+                elseif b.id == 1 then self:writePage()
                 elseif b.id == 2 then self:openNote()
                 elseif b.id == 3 then self:openTasks()
                 elseif b.id == 4 then self:openSetup() end
@@ -1671,9 +1715,6 @@ function PZStoryBook:writePage(freshNote)
         return
     end
 
-    self.viewing = nil                    -- writing always returns to the live page
-    self.pageTitle, self.pageText = "", ""
-    self.scroll, self.chunks = 0, 0
     self.statusLine = freshNote and "thinking about that..." or "reading the world..."
     local tp = api("timepiece")
     if tp then pcall(function() self.timepiece = tp() end) end
@@ -1688,6 +1729,11 @@ function PZStoryBook:writePage(freshNote)
         self.statusLine = tostring(refusal)
         return
     end
+    -- Preserve the page already on screen when a request cannot even start.
+    -- Once accepted, clear it before the next tick can drain streamed text.
+    self.viewing = nil                    -- writing always returns to the live page
+    self.pageTitle, self.pageText = "", ""
+    self.scroll, self.chunks = 0, 0
     self.streaming  = true
     self.statusLine = "connecting..."
 end
@@ -1718,7 +1764,7 @@ function PZStoryBook:step(dir)
             return
         end
         self.viewing    = 0
-        self.pageTitle  = "WHY HE IS DOING THIS"
+        self.pageTitle  = "WHY THEY ARE DOING THIS"
         self.pageText   = why
         self.scroll     = 0
         self.statusLine = "the reason this story began"
@@ -1799,6 +1845,30 @@ local FAULTS = {
     request = { "MALFORMED REQUEST",
         "The service rejected the shape of what this device sent.\n\nThis one "
         .. "is a fault in the device itself - the log has the detail." },
+    invalid_output = { "UNREADABLE PAGE",
+        "A complete reply came back, but it did not contain every required "
+        .. "part of a safe page.\n\nIt was discarded. The archive, canon, list "
+        .. "and last known state are unchanged." },
+    save = { "STORAGE FAILURE",
+        "The page was complete, but this device could not preserve the whole "
+        .. "campaign transaction on disk.\n\nThe old campaign is unchanged. "
+        .. "Check free space and folder permissions before trying again." },
+    truncated = { "PAGE CUT OFF",
+        "The reply ended before the page contract was complete.\n\nNothing was "
+        .. "saved. Lower the page length or raise this profile's output cap." },
+    too_large = { "REPLY TOO LARGE",
+        "The reply crossed the device's hard safety limit and was discarded.\n\n"
+        .. "Nothing was saved." },
+    request_too_large = { "BOOK TOO LARGE",
+        "The encoded request exceeded this profile's deliberate input limit.\n\n"
+        .. "Reduce retained history or raise the profile limit knowingly." },
+    endpoint = { "UNSAFE ADDRESS",
+        "This profile points to an address the device will not send private "
+        .. "story data to.\n\nUse HTTPS remotely, or a literal loopback address "
+        .. "for a local model." },
+    protocol = { "BROKEN TRANSMISSION",
+        "The service answered, but the stream was not valid provider data.\n\n"
+        .. "The unreadable reply was discarded and nothing was saved." },
 }
 
 function PZStoryBook:showFault(kind, waitSec, err)
@@ -1877,6 +1947,10 @@ function PZStoryBook:drain()
         self.statusLine = string.format("connecting... %.1fs", elapsed / 1000)
     elseif status == "STREAMING" then
         self.statusLine = string.format("writing  %d chars  %.1fs", chars, elapsed / 1000)
+    elseif status == "RECEIVED" then
+        self.statusLine = "checking the finished page..."
+    elseif status == "COMMITTING" then
+        self.statusLine = "saving the finished page..."
     end
 
     if done then
@@ -1886,7 +1960,11 @@ function PZStoryBook:drain()
         -- wrong one the moment it stops: a finished page is read from the
         -- top, and leaving it at the bottom reads as "the start got cut off".
         self.scroll = 0
-        if err then
+        if status == "CANCELLED" then
+            self.pageTitle  = "PAGE STOPPED"
+            self.pageText   = "The unfinished reply was discarded. Nothing was saved to this story."
+            self.statusLine = "stopped - nothing saved"
+        elseif err then
             local kind  = type(data.failKind) == "string" and data.failKind or "unknown"
             local wait  = tonumber(data.retryAfter) or 0
             self:showFault(kind, wait, err)
