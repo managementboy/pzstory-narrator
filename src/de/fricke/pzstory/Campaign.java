@@ -1,10 +1,8 @@
 package de.fricke.pzstory;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +23,13 @@ import zombie.ZomboidFileSystem;
  * any moment and a half-written page would poison every later prompt.
  */
 public final class Campaign {
+
+    private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
+    private static final int MAX_PAGES_ON_DISK = 5000;
+    private static final int MAX_CANON = 2000;
+    private static final int MAX_SEEN = 400;
+    private static final int MAX_DIRECTIONS = 20;
+    private static final int MAX_STANDING = 20;
 
     /** One written page. */
     public static final class Page {
@@ -55,6 +60,8 @@ public final class Campaign {
     private static final LinkedHashSet<String> STANDING = new LinkedHashSet<>();
 
     private static boolean loaded = false;
+    /** True only when a corrupt store could not be backed up safely. */
+    private static boolean persistenceBlocked = false;
 
     /**
      * Which campaign this is, counting from process start.
@@ -116,89 +123,172 @@ public final class Campaign {
         ACHIEVED.clear();
         DECLINED.clear();
         loaded = false;
+        persistenceBlocked = false;
     }
 
     // ------------------------------------------------------------------ load
 
     public static synchronized void load() {
         if (loaded) return;
-        loaded = true;
+        Path p = root().resolve("campaign.json");
         try {
-            Path p = root().resolve("campaign.json");
             if (!Files.isRegularFile(p)) {
+                loaded = true;
                 Config.log("campaign: new book at " + root());
                 return;
             }
             Map<String, Object> m = JsonParse.parseObject(
-                    new String(Files.readAllBytes(p), StandardCharsets.UTF_8));
+                    BoundedFiles.readUtf8(p, MAX_CAMPAIGN_BYTES));
 
-            Object canon = m.get("canon");
-            if (canon instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s) CANON.add(s);
-            }
-            OPENING = JsonParse.str(m, "opening", "");
+            LinkedHashSet<String> nextCanon = new LinkedHashSet<>(
+                    stringList(m.get("canon"), "canon", 10000, 300));
+            String nextOpening = field(m, "opening", 32000);
             // Self-heal a campaign opened by 1.15.0/1.15.1, where the trait
             // list had become objects but the opening builder still called
             // String.valueOf() on them and wrote "He is {name=keen cook,
             // kind=..., means=...}" into a field that is FIXED for the life of
             // the book and re-read on every single page. Clearing it makes the
             // next page rebuild it correctly from the same character.
-            if (OPENING.contains("{name=") || OPENING.contains("{name =")) {
+            if (nextOpening.contains("{name=") || nextOpening.contains("{name =")) {
                 Config.log("campaign: opening was written by a broken build "
                         + "- clearing it so the next page rewrites it");
-                OPENING = "";
+                nextOpening = "";
             }
-            SCENARIO = JsonParse.str(m, "scenario", "");
-            PREMISE  = JsonParse.str(m, "premise", "");
-            LAST_STATE = JsonParse.str(m, "lastState", "");
-            Object td = m.get("todo");
-            if (td instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s3) TODO.add(s3);
-            }
-            Object ac = m.get("achieved");
-            if (ac instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s4) ACHIEVED.add(s4);
-            }
-            Object dc = m.get("declined");
-            if (dc instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s5) DECLINED.add(s5);
-            }
-            Object seen = m.get("seen");
-            if (seen instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s2) SEEN.add(s2);
-            }
-            Object dir = m.get("directions");
-            if (dir instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s) DIRECTIONS.add(s);
-            }
-            Object st = m.get("standing");
-            if (st instanceof List<?> l) {
-                for (Object o : l) if (o instanceof String s) STANDING.add(s);
-            }
+            String nextScenario = field(m, "scenario", 64);
+            String nextPremise = field(m, "premise", 32000);
+            String nextLastState = field(m, "lastState", 4 * 1024 * 1024);
+            List<String> nextTodo = stringList(m.get("todo"), "todo", 100, 512);
+            List<String> nextAchieved = stringList(
+                    m.get("achieved"), "achieved", 100, 512);
+            List<String> nextDeclined = stringList(
+                    m.get("declined"), "declined", 100, 512);
+            LinkedHashSet<String> nextSeen = new LinkedHashSet<>(
+                    stringList(m.get("seen"), "seen", 1000, 512));
+            List<String> nextDirections = stringList(
+                    m.get("directions"), "directions", 100, 500);
+            LinkedHashSet<String> nextStanding = new LinkedHashSet<>(
+                    stringList(m.get("standing"), "standing", 100, 500));
+
+            List<Page> nextPages = new ArrayList<>();
             Object pages = m.get("pages");
             if (pages instanceof List<?> l) {
+                if (l.size() > MAX_PAGES_ON_DISK) {
+                    throw new IllegalStateException("pages has more than "
+                            + MAX_PAGES_ON_DISK + " entries");
+                }
                 for (Object o : l) {
-                    if (o instanceof Map<?, ?>) {
-                        PAGES.add(new Page(
-                                JsonParse.num(o, "n", PAGES.size() + 1),
-                                JsonParse.str(o, "title", ""),
-                                JsonParse.str(o, "text", ""),
-                                JsonParse.str(o, "stamp", "")));
+                    if (!(o instanceof Map<?, ?>)) {
+                        throw new IllegalStateException("pages contains a non-object entry");
                     }
+                    nextPages.add(new Page(
+                            JsonParse.num(o, "n", nextPages.size() + 1),
+                            field(o, "title", 512),
+                            field(o, "text", 128 * 1024),
+                            field(o, "stamp", 128)));
                 }
             }
+
+            // Publish only after every field and collection passed validation.
+            PAGES.clear(); PAGES.addAll(nextPages);
+            CANON.clear(); CANON.addAll(nextCanon);
+            DIRECTIONS.clear(); DIRECTIONS.addAll(nextDirections);
+            STANDING.clear(); STANDING.addAll(nextStanding);
+            SEEN.clear(); SEEN.addAll(nextSeen);
+            TODO.clear(); TODO.addAll(nextTodo);
+            ACHIEVED.clear(); ACHIEVED.addAll(nextAchieved);
+            DECLINED.clear(); DECLINED.addAll(nextDeclined);
+            OPENING = nextOpening;
+            SCENARIO = nextScenario;
+            PREMISE = nextPremise;
+            LAST_STATE = nextLastState;
+            trimOldest(CANON, MAX_CANON);
+            trimOldest(SEEN, MAX_SEEN);
+            trimOldest(DIRECTIONS, MAX_DIRECTIONS);
+            trimOldest(STANDING, MAX_STANDING);
+            loaded = true;
+            persistenceBlocked = false;
             Config.log("campaign: loaded " + PAGES.size() + " page(s), "
                     + CANON.size() + " canon entries from " + root());
         } catch (Throwable t) {
-            // A corrupt store must not stop the mod. Better a fresh book than
-            // no book, and the old file stays on disk to be recovered by hand.
-            Config.log("campaign: could not read the store (" + t + ") - starting fresh");
+            clearLoadedData();
+            loaded = true;
+            Path backup = p.resolveSibling(
+                    "campaign.json.corrupt-" + System.currentTimeMillis());
+            try {
+                Files.copy(p, backup);
+                Config.log("campaign: preserved unreadable store as " + backup);
+            } catch (Throwable copyFailure) {
+                // Do not overwrite the only remaining copy on the next save.
+                persistenceBlocked = true;
+                Config.log("campaign: could not preserve unreadable store ("
+                        + copyFailure + "); persistence is blocked for this session");
+            }
+            Config.log("campaign: could not read the store (" + t
+                    + ") - starting fresh in memory");
         }
     }
 
-    private static synchronized void save() {
+    private static void clearLoadedData() {
+        PAGES.clear();
+        CANON.clear();
+        DIRECTIONS.clear();
+        STANDING.clear();
+        SEEN.clear();
+        TODO.clear();
+        ACHIEVED.clear();
+        DECLINED.clear();
+        OPENING = "";
+        SCENARIO = "";
+        PREMISE = "";
+        LAST_STATE = "";
+    }
+
+    private static String field(Object object, String key, int maxChars) {
+        String value = JsonParse.str(object, key, "");
+        if (value.length() > maxChars) {
+            throw new IllegalStateException(key + " exceeds " + maxChars + " characters");
+        }
+        return value;
+    }
+
+    private static List<String> stringList(
+            Object value, String field, int maxEntries, int maxChars) {
+        List<String> out = new ArrayList<>();
+        if (value == null) return out;
+        if (!(value instanceof List<?> list)) {
+            throw new IllegalStateException(field + " is not an array");
+        }
+        if (list.size() > maxEntries) {
+            throw new IllegalStateException(field + " has more than "
+                    + maxEntries + " entries");
+        }
+        for (Object entry : list) {
+            if (!(entry instanceof String text)) {
+                throw new IllegalStateException(field + " contains a non-string entry");
+            }
+            if (text.length() > maxChars) {
+                throw new IllegalStateException(field + " entry exceeds "
+                        + maxChars + " characters");
+            }
+            out.add(text);
+        }
+        return out;
+    }
+
+    private static void trimOldest(java.util.Collection<?> values, int limit) {
+        while (values.size() > limit) {
+            java.util.Iterator<?> iterator = values.iterator();
+            iterator.next();
+            iterator.remove();
+        }
+    }
+
+    private static synchronized boolean save() {
+        if (persistenceBlocked) {
+            Config.log("campaign: SAVE REFUSED - unreadable store was not preserved");
+            return false;
+        }
         try {
-            Files.createDirectories(root());
             Json j = new Json().obj();
             j.put("schema", 1);
             j.arrKey("canon");
@@ -238,14 +328,11 @@ public final class Campaign {
             j.endArr();
             j.endObj();
 
-            // Atomic: a page half-written by a crash would poison every later
-            // prompt, and the player would never know why the story drifted.
-            Path tmp = root().resolve("campaign.json.tmp");
-            Files.write(tmp, j.toString().getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp, root().resolve("campaign.json"),
-                    StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.writeUtf8(root().resolve("campaign.json"), j.toString());
+            return true;
         } catch (Throwable t) {
             Config.log("campaign: SAVE FAILED - " + t);
+            return false;
         }
     }
 
@@ -264,7 +351,13 @@ public final class Campaign {
 
     public static synchronized void addPage(String title, String text, String stamp) {
         load();
-        if (text == null || text.isBlank()) return;
+        if (!addPageInMemory(title, text, stamp)) return;
+        save();
+        Config.log("campaign: page " + PAGES.size() + " kept (" + text.length() + " chars)");
+    }
+
+    private static boolean addPageInMemory(String title, String text, String stamp) {
+        if (text == null || text.isBlank()) return false;
         // A page with no title shows as "NO PAGE" on the device and as a blank
         // line in the archive, which reads like the page itself failed. The
         // prompt asks for one; this makes sure the book always has something
@@ -273,22 +366,32 @@ public final class Campaign {
         if (t.isEmpty()) t = "Page " + (PAGES.size() + 1);
         PAGES.add(new Page(PAGES.size() + 1, t, text.trim(),
                 stamp == null ? "" : stamp));
-        save();
-        Config.log("campaign: page " + PAGES.size() + " kept (" + text.length() + " chars)");
+        return true;
     }
 
     public static synchronized void addCanon(List<String> entries) {
         if (entries == null || entries.isEmpty()) return;
         load();
+        if (addCanonInMemory(entries)) save();
+    }
+
+    private static boolean addCanonInMemory(List<String> entries) {
+        if (entries == null || entries.isEmpty()) return false;
         int before = CANON.size();
         for (String e : entries) {
             if (e == null) continue;
             String s = e.trim();
             // A canon file is where an invented door would quietly become
             // permanent, so keep entries short and drop anything empty.
-            if (s.length() > 2 && s.length() <= 300) CANON.add(s);
+            if (s.length() > 2 && s.length() <= 300 && !CANON.contains(s)) {
+                if (CANON.size() >= MAX_CANON) {
+                    java.util.Iterator<String> oldest = CANON.iterator();
+                    if (oldest.hasNext()) { oldest.next(); oldest.remove(); }
+                }
+                CANON.add(s);
+            }
         }
-        if (CANON.size() != before) save();
+        return CANON.size() != before;
     }
 
     public static synchronized List<String> canon() {
@@ -427,12 +530,20 @@ public final class Campaign {
     public static synchronized void sawRoom(String room, String building) {
         if (room == null || room.isBlank()) return;
         load();
-        String key = building == null || building.isBlank()
-                ? room.trim()
-                : room.trim() + " (" + building.trim() + ")";
-        // Bounded: a long campaign should not grow this without limit.
-        if (SEEN.size() > 400) return;
+        String roomName = bounded(room.trim(), 192);
+        String buildingName = building == null ? "" : bounded(building.trim(), 48);
+        String key = buildingName.isBlank()
+                ? roomName
+                : roomName + " (" + buildingName + ")";
+        if (!SEEN.contains(key) && SEEN.size() >= MAX_SEEN) {
+            java.util.Iterator<String> oldest = SEEN.iterator();
+            if (oldest.hasNext()) { oldest.next(); oldest.remove(); }
+        }
         if (SEEN.add(key)) save();
+    }
+
+    private static String bounded(String text, int maxChars) {
+        return text.length() <= maxChars ? text : text.substring(0, maxChars);
     }
 
     public static synchronized String seenForPrompt() {
@@ -487,6 +598,12 @@ public final class Campaign {
 
     public static synchronized boolean addTodo(String text, String source) {
         load();
+        if (!addTodoInMemory(text, source)) return false;
+        save();
+        return true;
+    }
+
+    private static boolean addTodoInMemory(String text, String source) {
         if (text == null) return false;
         String t = text.strip();
         if (t.isEmpty() || t.length() > 160) return false;
@@ -517,8 +634,50 @@ public final class Campaign {
         }
         if (TODO.size() >= 40) return false;
         TODO.add(enc(OPEN, source == null ? "player" : source, t));
-        save();
         return true;
+    }
+
+    /**
+     * Commits every consequence of one successful model response as a single
+     * campaign transaction.
+     *
+     * The expected generation is checked while this class' monitor is held.
+     * reset() uses the same monitor, so either this method finishes against the
+     * old save before reset begins, or reset wins and this method changes
+     * nothing. There is no check-then-act window and no partially committed
+     * page for a successor request to observe.
+     */
+    public static synchronized boolean commitGeneratedPage(
+            long expectedGeneration,
+            String premise,
+            String title,
+            String text,
+            String stamp,
+            List<String> canon,
+            String todo,
+            String state) {
+        if (GENERATION.get() != expectedGeneration) {
+            Config.log("campaign: dropping completed page for stale generation "
+                    + expectedGeneration + " (current " + GENERATION.get() + ")");
+            return false;
+        }
+        load();
+        if (text == null || text.isBlank()) return false;
+
+        if (PREMISE.isEmpty() && premise != null && !premise.isBlank()) {
+            PREMISE = premise.strip();
+        }
+        addPageInMemory(title, text, stamp);
+        addCanonInMemory(canon);
+        addTodoInMemory(todo, "story");
+        DIRECTIONS.clear();
+        LAST_STATE = Delta.keep(state);
+        boolean stored = save();
+
+        Config.log("campaign: page " + PAGES.size() + " committed atomically ("
+                + text.length() + " chars, generation " + expectedGeneration
+                + (stored ? ")" : ", memory only - disk write failed)"));
+        return stored;
     }
 
     public static synchronized void toggleTodo(int oneBased) {
@@ -671,11 +830,17 @@ public final class Campaign {
                 return "kept as canon";
             }
             case "direction" -> {
+                if (DIRECTIONS.size() >= MAX_DIRECTIONS) {
+                    return "too many NEXT notes - use or remove one first";
+                }
                 DIRECTIONS.add(s);
                 save();
                 return "will steer the next page";
             }
             case "standing" -> {
+                if (!STANDING.contains(s) && STANDING.size() >= MAX_STANDING) {
+                    return "too many ALWAYS notes - remove one first";
+                }
                 STANDING.add(s);
                 save();
                 return "in force until you remove it";
@@ -776,11 +941,10 @@ public final class Campaign {
      * Everything written so far, for the prompt.
      *
      * A 300-word page is about 400 tokens, so thirty chapters is ~12k and even
-     * three hundred is ~120k - comfortably inside a modern context. We include
-     * the whole book rather than summarising, and only trim for profiles that
-     * declare a small budget (local models). Trimming drops the OLDEST pages,
-     * because recent events matter more to the next page than the first day
-     * does - and canon carries the durable facts forward regardless.
+     * three hundred is ~120k. Every profile now declares an input budget: paid
+     * input and model context are finite even when the model is hosted. Within
+     * that budget we retain the newest pages; recent events matter more to the
+     * next page than the first day does, while canon carries durable facts.
      *
      * @param charBudget approximate characters allowed, or <= 0 for unlimited.
      */
@@ -827,7 +991,17 @@ public final class Campaign {
                 sb.append('\n').append(p.text).append("\n\n");
             }
         }
-        return sb.toString();
+        String out = sb.toString();
+        if (charBudget > 0 && out.length() > charBudget) {
+            String marker = "(older history omitted to respect the profile's input limit)\n\n";
+            if (charBudget <= marker.length()) return "";
+            // The end contains the newest pages. Canon may be clipped here
+            // only when it alone has grown beyond the entire request budget;
+            // retaining recent events is safer than rejecting every future
+            // page with an oversized prompt.
+            return marker + out.substring(out.length() - (charBudget - marker.length()));
+        }
+        return out;
     }
 
     /** Archive listing for the book's page selector. */

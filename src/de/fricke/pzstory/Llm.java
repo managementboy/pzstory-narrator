@@ -1,6 +1,9 @@
 package de.fricke.pzstory;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -26,6 +29,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * One request in flight at a time - a page at a time is the whole interaction.
  */
 public final class Llm {
+
+    /** Provider-controlled input limits. These are hard safety ceilings. */
+    private static final int MAX_ERROR_BYTES  = 64 * 1024;
+    private static final int MAX_SSE_BYTES    = 2 * 1024 * 1024;
+    private static final int MAX_SSE_LINE     = 256 * 1024;
+    private static final int MAX_OUTPUT_CHARS = 128 * 1024;
 
     public enum Status { IDLE, CONNECTING, STREAMING, DONE, ERROR, CANCELLED }
 
@@ -130,7 +139,8 @@ public final class Llm {
         return start(system, "", user, null);
     }
 
-    public static String start(String system, String user, java.util.function.Consumer<String> onDone) {
+    public static String start(String system, String user,
+                               java.util.function.BiConsumer<Long, String> onDone) {
         return start(system, "", user, onDone);
     }
 
@@ -142,7 +152,8 @@ public final class Llm {
      * @param tail   the volatile part: the live state and the player's voice.
      *               Changes every call, so it must come last.
      * @param onDone run on the worker thread when the stream completes
-     *               successfully, receiving the completed text DIRECTLY.
+     *               successfully, receiving the campaign generation captured
+     *               for the request and the completed text DIRECTLY.
      *               Never run on error, cancellation, truncation, or after
      *               the campaign it was started for has been replaced. It is
      *               handed the text rather than calling Llm.text() so that a
@@ -150,7 +161,7 @@ public final class Llm {
      *               a callback that is already running.
      */
     public static String start(String system, String cached, String tail,
-                               java.util.function.Consumer<String> onDone) {
+                               java.util.function.BiConsumer<Long, String> onDone) {
         final String user = tail;
         final String prefix = cached;
         final Req req;
@@ -168,6 +179,13 @@ public final class Llm {
             if (p == null) return "no active profile - check profiles.json";
             if (!p.usable()) return "profile '" + p.name + "' is not usable: " + p.describe();
 
+            long inputChars = (long) length(system) + length(cached) + length(tail);
+            if (inputChars > p.maxInputChars) {
+                return "prompt is " + inputChars + " characters, above profile '"
+                        + p.name + "' limit of " + p.maxInputChars
+                        + "; reduce history or raise maxInputChars deliberately";
+            }
+
             req = new Req(SEQ.incrementAndGet(), Campaign.generation());
             active = req;
             workerBusy = true;
@@ -176,34 +194,39 @@ public final class Llm {
         POOL.submit(() -> {
             try {
                 run(req, p, system, prefix, user);
+                // Read the outcome under the lock, then decide outside it.
+                final boolean ok;
+                final String text;
+                synchronized (LOCK) {
+                    ok = active == req
+                            && req.status[0] == Status.DONE
+                            && req.full.length() > 0;
+                    text = req.full.toString();
+                }
+                if (!ok || onDone == null) return;
+
+                // This early check avoids parsing a completed response after a
+                // save change. It is deliberately NOT the correctness barrier:
+                // Campaign.commitGeneratedPage() repeats the check while
+                // holding Campaign's monitor, so reset() cannot fit between
+                // the check and the mutations.
+                if (req.generation != Campaign.generation()) {
+                    Config.log("dropping a finished page: the save changed while it"
+                            + " was being written (gen " + req.generation
+                            + " -> " + Campaign.generation() + ")");
+                    return;
+                }
+                if (!req.callbackRan.compareAndSet(false, true)) return; // at most once
+                try {
+                    onDone.accept(req.generation, text);
+                } catch (Throwable t) {
+                    Config.log("post-stream hook failed: " + t);
+                }
             } finally {
+                // The request slot includes its success commit. Releasing it
+                // before the callback let a successor snapshot a half-written
+                // campaign (page present, canon and state not yet present).
                 synchronized (LOCK) { workerBusy = false; }
-            }
-            // Read the outcome under the lock, then decide outside it.
-            final boolean ok;
-            final String text;
-            synchronized (LOCK) {
-                ok = active == req
-                        && req.status[0] == Status.DONE
-                        && req.full.length() > 0;
-                text = req.full.toString();
-            }
-            if (!ok || onDone == null) return;
-            // The campaign may have been swapped for another save while this
-            // request was in flight. Committing A's page into B's book is
-            // silent cross-save corruption, so the generation is rechecked
-            // here and again inside Campaign under its own lock.
-            if (req.generation != Campaign.generation()) {
-                Config.log("dropping a finished page: the save changed while it"
-                        + " was being written (gen " + req.generation
-                        + " -> " + Campaign.generation() + ")");
-                return;
-            }
-            if (!req.callbackRan.compareAndSet(false, true)) return;   // at most once
-            try {
-                onDone.accept(text);
-            } catch (Throwable t) {
-                Config.log("post-stream hook failed: " + t);
             }
         });
         return null;
@@ -262,10 +285,10 @@ public final class Llm {
             if (r.retryAfter > 0) j.put("retryAfter", r.retryAfter);
             if (r.startedAt > 0) j.put("elapsedMs", System.currentTimeMillis() - r.startedAt);
             if (r.firstTokenAt > 0) j.put("firstTokenMs", r.firstTokenAt - r.startedAt);
-            if (r.inputTokens > 0) j.put("req.inputTokens", r.inputTokens);
-            if (r.cacheRead > 0) j.put("req.cacheRead", r.cacheRead);
-            if (r.cacheWrite > 0) j.put("req.cacheWrite", r.cacheWrite);
-            if (r.outputTokens > 0) j.put("req.outputTokens", r.outputTokens);
+            if (r.inputTokens > 0) j.put("inputTokens", r.inputTokens);
+            if (r.cacheRead > 0) j.put("cacheRead", r.cacheRead);
+            if (r.cacheWrite > 0) j.put("cacheWrite", r.cacheWrite);
+            if (r.outputTokens > 0) j.put("outputTokens", r.outputTokens);
             return j.endObj().toString();
         }
     }
@@ -346,17 +369,33 @@ public final class Llm {
                 }
             }
 
+            byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+            if (bodyBytes.length > p.maxRequestBytes) {
+                req.failKind = "request_too_large";
+                fail(req, "encoded request is " + bodyBytes.length
+                        + " bytes, above profile '" + p.name + "' limit of "
+                        + p.maxRequestBytes + "; reduce history or raise "
+                        + "maxRequestBytes deliberately");
+                return;
+            }
+
             HttpRequest httpReq = rb
-                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
                     .build();
 
-            Config.log("request -> " + p.kind + "/" + p.model + " (" + body.length() + " bytes)");
+            Config.log("request -> " + p.kind + "/" + p.model + " ("
+                    + bodyBytes.length + " bytes, "
+                    + ((long) length(system) + length(prefix) + length(user))
+                    + " prompt chars)");
 
             HttpResponse<InputStream> res =
                     client().send(httpReq, HttpResponse.BodyHandlers.ofInputStream());
 
             if (res.statusCode() != 200) {
-                String errBody = new String(res.body().readAllBytes(), StandardCharsets.UTF_8);
+                String errBody;
+                try (InputStream errorStream = res.body()) {
+                    errBody = readUtf8Bounded(errorStream, MAX_ERROR_BYTES);
+                }
                 int code = res.statusCode();
                 req.failKind = kindOf(code, errBody);
                 req.retryAfter = retryAfter(res, errBody);
@@ -385,6 +424,9 @@ public final class Llm {
         } catch (java.net.http.HttpTimeoutException e) {
             req.failKind = "timeout";
             fail(req, "timed out waiting for the model");
+        } catch (ResponseTooLarge e) {
+            req.failKind = "too_large";
+            fail(req, e.getMessage());
         } catch (Throwable t) {
             fail(req, t.getClass().getSimpleName() + ": " + Config.redact(String.valueOf(t.getMessage())));
         } finally {
@@ -434,9 +476,12 @@ public final class Llm {
             throws Exception {
         boolean gemini = "gemini".equals(kind);
         int badEvents = 0;
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+        try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
+                     "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
+             BufferedReader r = new BufferedReader(
+                     new InputStreamReader(limited, StandardCharsets.UTF_8))) {
             String line;
-            while ((line = r.readLine()) != null) {
+            while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
                 if (req.cancelled.get()) { Config.log("stream cancelled by player"); return; }
                 if (line.isEmpty() || !line.startsWith("data:")) continue;
                 String payload = line.substring(5).trim();
@@ -556,9 +601,12 @@ public final class Llm {
     }
 
     private static void readSseAnthropic(Req req, InputStream in) throws Exception {
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+        try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
+                     "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
+             BufferedReader r = new BufferedReader(
+                     new InputStreamReader(limited, StandardCharsets.UTF_8))) {
             String line;
-            while ((line = r.readLine()) != null) {
+            while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
                 if (req.cancelled.get()) {
                     Config.log("stream cancelled by player");
                     return;
@@ -642,11 +690,21 @@ public final class Llm {
 
     /** Appends streamed text - but only if this request is still the active one. */
     private static void append(Req req, String t) {
+        boolean tooLarge = false;
         synchronized (LOCK) {
             if (active != req || req.isTerminal()) return;   // late bytes from a dead request
-            if (req.firstTokenAt == 0) req.firstTokenAt = System.currentTimeMillis();
-            req.full.append(t);
-            req.pending.append(t);
+            if (req.full.length() + t.length() > MAX_OUTPUT_CHARS) {
+                req.failKind = "too_large";
+                tooLarge = true;
+            } else {
+                if (req.firstTokenAt == 0) req.firstTokenAt = System.currentTimeMillis();
+                req.full.append(t);
+                req.pending.append(t);
+            }
+        }
+        if (tooLarge) {
+            fail(req, "the provider produced more than " + MAX_OUTPUT_CHARS
+                    + " characters; the page was discarded");
         }
     }
 
@@ -665,6 +723,88 @@ public final class Llm {
      * would end in an EOF that looks like a clean finish.
      */
     private static final int MAX_BAD_EVENTS = 32;
+
+    /** A checked failure used for every provider-controlled size ceiling. */
+    private static final class ResponseTooLarge extends IOException {
+        ResponseTooLarge(String message) { super(message); }
+    }
+
+    /**
+     * Enforces a byte budget before BufferedReader or a byte accumulator gets
+     * a chance to allocate from an untrusted response. One probe byte beyond
+     * the limit distinguishes an exact-length response from an oversized one.
+     */
+    private static final class LimitedInputStream extends FilterInputStream {
+        private int remaining;
+        private final String message;
+
+        LimitedInputStream(InputStream in, int limit, String message) {
+            super(in);
+            this.remaining = limit;
+            this.message = message;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining == 0) {
+                int probe = super.read();
+                if (probe < 0) return -1;
+                throw new ResponseTooLarge(message);
+            }
+            int value = super.read();
+            if (value >= 0) remaining--;
+            return value;
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            if (remaining == 0) return read();
+            int n = super.read(b, off, Math.min(len, remaining));
+            if (n > 0) remaining -= n;
+            return n;
+        }
+    }
+
+    private static String readUtf8Bounded(InputStream in, int maxBytes)
+            throws IOException {
+        try (InputStream limited = new LimitedInputStream(in, maxBytes,
+                "the provider error response exceeded " + maxBytes + " bytes");
+             ByteArrayOutputStream out = new ByteArrayOutputStream(
+                     Math.min(maxBytes, 8192))) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = limited.read(buf)) >= 0) {
+                if (n > 0) out.write(buf, 0, n);
+            }
+            return out.toString(StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * A bounded replacement for BufferedReader.readLine(). Checking a String
+     * returned by readLine would be too late: the enormous allocation would
+     * already have happened. CRLF and bare CR are both accepted.
+     */
+    private static String readLineBounded(BufferedReader reader, int maxChars)
+            throws IOException {
+        StringBuilder line = new StringBuilder(Math.min(maxChars, 1024));
+        while (true) {
+            int ch = reader.read();
+            if (ch < 0) return line.isEmpty() ? null : line.toString();
+            if (ch == '\n') return line.toString();
+            if (ch == '\r') {
+                reader.mark(1);
+                int next = reader.read();
+                if (next != '\n' && next >= 0) reader.reset();
+                return line.toString();
+            }
+            if (line.length() >= maxChars) {
+                throw new ResponseTooLarge(
+                        "a provider stream event exceeded " + maxChars + " characters");
+            }
+            line.append((char) ch);
+        }
+    }
 
     private static void fail(Req req, String msg) {
         synchronized (LOCK) {
@@ -781,6 +921,10 @@ public final class Llm {
     private static int ceiling() {
         int words = Settings.words();
         return Math.max(1500, (int) (words * 2.6) + 160);
+    }
+
+    private static int length(String s) {
+        return s == null ? 0 : s.length();
     }
 
     /**

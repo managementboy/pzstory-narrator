@@ -44,5 +44,5 @@ public final class Version {
      *   2  release 1.24.0 - added apiVersion(), archiveTitle(), archiveText(),
      *      archiveStamp(), streamError(), streamFailKind(), streamRetryAfter()
      */
-    public static final String API = "2";
+    public static final String API = "3";
 }

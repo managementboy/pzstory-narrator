@@ -59,7 +59,11 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
 esac
 
 OUT="$ROOT/build/classes"
-JAR="$ROOT/mod/42/media/java/PZStory.jar"
+JAR="${JAR_OUT:-$ROOT/mod/42/media/java/PZStory.jar}"
+case "$JAR" in
+    /*) ;;
+    *) JAR="$ROOT/$JAR" ;;
+esac
 
 rm -rf "$OUT"
 mkdir -p "$OUT" "$(dirname "$JAR")"
@@ -87,7 +91,7 @@ fi
 "$JDK/jar" --create --file "$JAR" --date "$STAMP" -C "$OUT" .
 
 echo "== verifying =="
-"$ROOT/tools/verify.sh"
+JAR_PATH="$JAR" "$ROOT/tools/verify.sh"
 
 echo "== done =="
 ls -la "$JAR"

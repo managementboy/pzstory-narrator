@@ -14,7 +14,12 @@ fi
 
 # Pure-Java units only. Anything touching zombie.* belongs in the in-game
 # checks listed in dev/README.md, not here.
-UNITS="src/de/fricke/pzstory/Endpoint.java src/de/fricke/pzstory/Version.java"
+UNITS="src/de/fricke/pzstory/AtomicFiles.java \
+src/de/fricke/pzstory/BoundedFiles.java \
+src/de/fricke/pzstory/Endpoint.java \
+src/de/fricke/pzstory/Json.java \
+src/de/fricke/pzstory/JsonParse.java \
+src/de/fricke/pzstory/Version.java"
 
 rm -rf build/test && mkdir -p build/test
 "$JDK/javac" -encoding UTF-8 -Xlint:all -d build/test $UNITS test/de/fricke/pzstory/*.java

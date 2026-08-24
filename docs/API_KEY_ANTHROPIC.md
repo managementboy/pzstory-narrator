@@ -83,11 +83,20 @@ On Linux and macOS the same folder lives under `~/Zomboid/pzstory/`.
       "kind": "anthropic",
       "model": "claude-sonnet-5",
       "apiKey": "sk-ant-api03-REPLACE-ME",
-      "maxTokens": 1200
+      "maxTokens": 1200,
+      "maxInputChars": 300000,
+      "maxRequestBytes": 1000000
     }
   }
 }
 ```
+
+`maxTokens` caps visible output. Input is also billable and a campaign grows
+for as long as its save exists, so `maxInputChars` limits the system prompt,
+live snapshot and retained story history together. `maxRequestBytes` is the
+final UTF-8 JSON-body ceiling after provider-specific encoding. The defaults
+are intentionally generous; raise either only when the chosen model's context
+window and the account's spending limit can support it.
 
 Save it, start Project Zomboid, and pick the profile in
 **Options → Mods → PZStory**. The in-game menu lists profile *names* only — the

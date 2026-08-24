@@ -23,11 +23,17 @@ with it. `.gitignore` refuses `profiles.json`, `settings.json`, `*.key` and
 `.env` in case anyone drops one in the tree.
 
 Keys are never written into a page, never stored in the campaign file, and
-never logged. `Config.redact()` runs over **every** line the mod prints, in two
-passes: the exact keys currently loaded, then a generic sweep for `sk-…` and
-`AIza…` shapes in case a provider echoes one back inside an error body. This is
-why `console.txt` is safe to paste into a bug report — but skim it anyway
-before you do.
+never intentionally logged. `Config.redact()` runs over every production log
+record in two passes: the exact keys currently loaded, then a generic sweep for
+`sk-…` and `AIza…` shapes in case a provider echoes one back inside an error
+body. Control characters are escaped and records are length-limited so an
+untrusted error cannot forge additional log lines.
+
+The optional development probe can print a complete snapshot when you press
+F9. That snapshot contains the character name, exact position and inventory.
+Always review `console.txt` before sharing it; redaction is a defence in depth,
+not a promise that every possible private value or future provider key format
+can be identified automatically.
 
 ## Audit, August 2026 — second pass (release 1.24.0)
 
@@ -79,14 +85,36 @@ An external review of `c097a5f` found more than the first pass did. Fixed in
   is now honoured exactly as the visible-output cap, and reasoning is an
   explicit opt-in `thinkingTokens` field that defaults to 0.
 
-### Still open at 1.24.0
+### Follow-up hardening patches
 
-Reported by the same review and **not yet fixed** — see the repository issues:
-bounded reads for files, SSE events and accumulated output; transactional
-config reload; `ATOMIC_MOVE` and corrupt-file preservation in the campaign
-store; count limits on directions and standing notes; the `SEEN.size() > 400`
-off-by-one; inventory traversal budget; and replacing the remaining regex
-parsing of JSON strings in Lua.
+The remaining findings were addressed as independent, reviewable commits on
+the August 2026 audit branch:
+
+- Generated pages are committed through one generation-checked campaign
+  transaction, so request completion cannot cross save boundaries.
+- Provider error bodies, SSE streams, individual SSE lines, and accumulated
+  visible output all have enforced byte or character ceilings.
+- Prompt history, caller input, and the final UTF-8 request body are bounded
+  independently, preventing encoding or template overhead from bypassing the
+  advertised request limit.
+- Player-controlled JSON files are read under live byte ceilings and parsed
+  into temporary state. A failed reload retains the last-known-good profile;
+  a corrupt campaign must be preserved before persistence can resume.
+- State writes force a complete temporary file, replace the destination with
+  `ATOMIC_MOVE` where supported, and force the containing directory where the
+  platform permits it.
+- Production logs use one redacting, control-escaping, record-length-limited
+  sink. Full state snapshots remain an explicit development-probe action.
+- Lua now decodes strict, bounded JSON structures instead of extracting fields
+  with patterns that break on escaped quotes, braces, or attacker-controlled
+  record text.
+- Canon, remembered rooms, NEXT/ALWAYS notes, inventory traversal, nested
+  containers, item labels, bags, and literature entries all have explicit
+  budgets. Container identities are tracked to stop cycles in modded items.
+- Release maintainers can rebuild into isolation and require exact equality
+  with the committed JAR; workflow actions are pinned to immutable commits.
+- Regression tests now cover strict JSON, bounded reads, atomic replacement,
+  endpoint policy, versions, and the Lua/Java bridge contract.
 
 ## Audit, August 2026 — first pass
 

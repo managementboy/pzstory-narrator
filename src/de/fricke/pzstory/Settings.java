@@ -1,9 +1,7 @@
 package de.fricke.pzstory;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Map;
 
 /**
@@ -18,6 +16,8 @@ import java.util.Map;
  * per-campaign, so it does NOT belong in the save folder.
  */
 public final class Settings {
+
+    private static final int MAX_SETTINGS_BYTES = 64 * 1024;
 
     /**
      * How much of the world the narrator is allowed to see.
@@ -65,22 +65,36 @@ public final class Settings {
 
     public static synchronized void load() {
         if (loaded) return;
-        loaded = true;
         try {
             Path p = file();
-            if (!Files.isRegularFile(p)) return;
+            if (!Files.isRegularFile(p)) { loaded = true; return; }
             Map<String, Object> m = JsonParse.parseObject(
-                    new String(Files.readAllBytes(p), StandardCharsets.UTF_8));
-            zoom        = JsonParse.num(m, "zoom", 0);
-            knowledge   = clampKnow(JsonParse.num(m, "knowledge", KNOW_MEMORY));
-            words       = Math.max(100, Math.min(400, JsonParse.num(m, "words", 200)));
-            pauseOnOpen = !"false".equals(JsonParse.str(m, "pauseOnOpen", "true"));
-            profile     = JsonParse.str(m, "profile", "");
-            nudge       = Math.max(1, Math.min(3, JsonParse.num(m, "nudge", 2)));
-            doom        = Math.max(1, Math.min(3, JsonParse.num(m, "doom", DOOM_INEVITABLE)));
+                    BoundedFiles.readUtf8(p, MAX_SETTINGS_BYTES));
+
+            int nextZoom = JsonParse.num(m, "zoom", 0);
+            int nextKnowledge = clampKnow(JsonParse.num(m, "knowledge", KNOW_MEMORY));
+            int nextWords = Math.max(100, Math.min(400, JsonParse.num(m, "words", 200)));
+            boolean nextPause = !"false".equals(JsonParse.str(m, "pauseOnOpen", "true"));
+            String nextProfile = JsonParse.str(m, "profile", "");
+            int nextNudge = Math.max(1, Math.min(3, JsonParse.num(m, "nudge", 2)));
+            int nextDoom = Math.max(1, Math.min(3,
+                    JsonParse.num(m, "doom", DOOM_INEVITABLE)));
+            if (nextProfile.length() > 64) {
+                throw new IllegalArgumentException("profile name is longer than 64 characters");
+            }
+
+            zoom = nextZoom;
+            knowledge = nextKnowledge;
+            words = nextWords;
+            pauseOnOpen = nextPause;
+            profile = nextProfile;
+            nudge = nextNudge;
+            doom = nextDoom;
+            loaded = true;
             Config.log("settings: knowledge=" + KNOW_LABELS[knowledge]
                     + " words=" + words + " pause=" + pauseOnOpen + " zoom=" + zoom);
         } catch (Throwable t) {
+            loaded = true;
             Config.log("settings: unreadable (" + t + ") - using defaults");
         }
     }
@@ -96,11 +110,7 @@ public final class Settings {
             j.put("nudge", nudge);
             j.put("doom", doom);
             j.endObj();
-            Path p = file();
-            Files.createDirectories(p.getParent());
-            Path tmp = p.resolveSibling("settings.json.tmp");
-            Files.write(tmp, j.toString().getBytes(StandardCharsets.UTF_8));
-            Files.move(tmp, p, StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.writeUtf8(file(), j.toString());
         } catch (Throwable t) {
             Config.log("settings: SAVE FAILED - " + t);
         }

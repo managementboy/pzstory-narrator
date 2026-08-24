@@ -1,6 +1,5 @@
 package de.fricke.pzstory;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -23,6 +22,9 @@ import zombie.ZomboidFileSystem;
  */
 public final class Config {
 
+    private static final int MAX_PROFILES_BYTES = 1024 * 1024;
+    private static final int MAX_PROFILES = 64;
+
     /** Bounds a configured number. Every numeric setting goes through this. */
     private static int clamp(int v, int lo, int hi) {
         return v < lo ? lo : (v > hi ? hi : v);
@@ -36,6 +38,10 @@ public final class Config {
         public final String apiKey;
         public final String baseUrl;     // null for anthropic (fixed endpoint)
         public final int maxTokens;
+        /** Total prompt characters accepted before a request is started. */
+        public final int maxInputChars;
+        /** UTF-8 request-body ceiling after provider-specific JSON encoding. */
+        public final int maxRequestBytes;
         /** Extra budget for model reasoning. 0 disables it. See profiles.json docs. */
         public final int thinkingTokens;
         public final String systemMode;  // native | prepend_to_user | both
@@ -50,6 +56,14 @@ public final class Config {
             // Clamped, not trusted. A negative or absurd value from a
             // hand-edited profiles.json would otherwise reach the provider.
             this.maxTokens = clamp(JsonParse.num(m, "maxTokens", 2000), 256, 32000);
+            // Input is billable too, and a campaign grows for as long as its
+            // save exists. Never let "hosted models get the whole book" mean
+            // an unlimited request. These are user-tunable soft ceilings under
+            // hard implementation maxima.
+            this.maxInputChars = clamp(
+                    JsonParse.num(m, "maxInputChars", 300000), 24000, 1000000);
+            this.maxRequestBytes = clamp(
+                    JsonParse.num(m, "maxRequestBytes", 1000000), 131072, 2000000);
             // Reasoning budget, OFF by default and never applied implicitly.
             // Anthropic bills thinking tokens against max_tokens, so the old
             // code added 8000 to whatever the player had configured - a cap
@@ -61,6 +75,14 @@ public final class Config {
             // default would miss between most of them. Cache writes cost 2x,
             // reads are a fraction of base - so a hit pays for several misses.
             this.cacheTtl = JsonParse.str(m, "cacheTtl", "1h");
+
+            requireLength("profile name", name, 1, 64);
+            requireOneOf("kind", kind, "anthropic", "openai-compatible", "gemini");
+            requireLength("model", model, 1, 256);
+            requireLength("apiKey", apiKey, 0, 4096);
+            if (baseUrl != null) requireLength("baseUrl", baseUrl, 1, Endpoint.MAX_URL_CHARS);
+            requireOneOf("systemMode", systemMode, "native", "prepend_to_user", "both");
+            requireOneOf("cacheTtl", cacheTtl, "1h", "5m", "off");
         }
 
         /** True when this profile could actually be used for a call. */
@@ -75,7 +97,8 @@ public final class Config {
                     : apiKey.contains("PASTE") ? "PLACEHOLDER - not filled in"
                     : "key set (" + apiKey.length() + " chars)";
             return name + " [" + kind + "] model=" + model
-                    + " maxTokens=" + maxTokens + " " + keyState;
+                    + " maxTokens=" + maxTokens
+                    + " maxInputChars=" + maxInputChars + " " + keyState;
         }
     }
 
@@ -85,6 +108,19 @@ public final class Config {
     private static Path path = null;
 
     private Config() {}
+
+    private static void requireLength(String field, String value, int min, int max) {
+        int n = value == null ? 0 : value.length();
+        if (n < min || n > max) {
+            throw new IllegalArgumentException(field + " length " + n
+                    + " is outside " + min + ".." + max);
+        }
+    }
+
+    private static void requireOneOf(String field, String value, String... allowed) {
+        for (String candidate : allowed) if (candidate.equals(value)) return;
+        throw new IllegalArgumentException("unsupported " + field + " value");
+    }
 
     public static Path file() {
         if (path == null) {
@@ -106,49 +142,57 @@ public final class Config {
      * @return a human-readable status line, never null, never containing a key.
      */
     public static synchronized String reload() {
-        PROFILES.clear();
-        activeName = null;
-        loadError = null;
-
         Path p = file();
         if (!Files.isRegularFile(p)) {
             loadError = "not found: " + p;
-            return "PZStory: no profiles.json at " + p;
+            return "PZStory: no profiles.json at " + p
+                    + (PROFILES.isEmpty() ? "" : " - keeping the last valid configuration");
         }
         try {
-            String text = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
+            String text = BoundedFiles.readUtf8(p, MAX_PROFILES_BYTES);
             Map<String, Object> root = JsonParse.parseObject(text);
-            activeName = JsonParse.str(root, "activeProfile", null);
+            String nextActive = JsonParse.str(root, "activeProfile", null);
+            Map<String, Profile> next = new LinkedHashMap<>();
 
             Map<String, Object> profs = JsonParse.map(root, "profiles");
             if (profs == null) {
-                loadError = "no \"profiles\" object";
-                return "PZStory: profiles.json has no \"profiles\" object";
+                throw new IllegalArgumentException("no \"profiles\" object");
+            }
+            if (profs.size() > MAX_PROFILES) {
+                throw new IllegalArgumentException("more than " + MAX_PROFILES + " profiles");
             }
             for (Map.Entry<String, Object> e : profs.entrySet()) {
                 if (e.getValue() instanceof Map<?, ?>) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> m = (Map<String, Object>) e.getValue();
-                    PROFILES.put(e.getKey(), new Profile(e.getKey(), m));
+                    next.put(e.getKey(), new Profile(e.getKey(), m));
                 }
             }
+            if (next.isEmpty()) throw new IllegalArgumentException("no valid profiles");
             // A profile chosen on the device beats the file's default, so
             // switching provider does not mean hand-editing JSON.
             String remembered = Settings.profile();
-            if (remembered != null && PROFILES.containsKey(remembered)) {
-                activeName = remembered;
+            if (remembered != null && next.containsKey(remembered)) {
+                nextActive = remembered;
             }
-            if (activeName == null && !PROFILES.isEmpty()) {
-                activeName = PROFILES.keySet().iterator().next();
+            if (nextActive == null || !next.containsKey(nextActive)) {
+                nextActive = next.keySet().iterator().next();
             }
-            Profile a = active();
+
+            // Publish only after the entire document and every profile passed.
+            PROFILES.clear();
+            PROFILES.putAll(next);
+            activeName = nextActive;
+            loadError = null;
+            Profile a = PROFILES.get(activeName);
             return "PZStory: loaded " + PROFILES.size() + " profile(s), active="
                     + activeName + (a == null ? " (MISSING)" : a.usable() ? " (ready)" : " (not usable)");
         } catch (Throwable t) {
             // A parse error is the single most likely thing to go wrong for a
             // player editing JSON by hand, so say exactly what and where.
             loadError = t.getClass().getSimpleName() + ": " + t.getMessage();
-            return "PZStory: could not read profiles.json - " + loadError;
+            return "PZStory: could not read profiles.json - " + loadError
+                    + (PROFILES.isEmpty() ? "" : " - keeping the last valid configuration");
         }
     }
 
@@ -216,6 +260,39 @@ public final class Config {
 
     /** Every log line from the mod goes through here. */
     public static void log(String msg) {
-        System.out.println("[PZStory] " + redact(msg));
+        System.out.println("[PZStory] " + safeForLog(msg));
+    }
+
+    /**
+     * One physical log record, even when a provider or another Lua mod passes
+     * CR/LF, terminal escapes, NULs, or a very large string. Redaction runs on
+     * the bounded candidate before anything reaches stdout.
+     */
+    private static String safeForLog(String text) {
+        String raw = String.valueOf(text);
+        if (raw.length() > 16384) raw = raw.substring(0, 16384) + "...[input truncated]";
+        raw = redact(raw);
+
+        StringBuilder out = new StringBuilder(Math.min(raw.length() + 32, 4096));
+        for (int i = 0; i < raw.length() && out.length() < 4096; i++) {
+            char c = raw.charAt(i);
+            switch (c) {
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20 || c == 0x7f) {
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        if (out.length() >= 4096) {
+            out.setLength(Math.max(0, 4096 - "...[truncated]".length()));
+            out.append("...[truncated]");
+        }
+        return out.toString();
     }
 }

@@ -63,10 +63,6 @@ public class StoryAPI {
         }
     }
 
-    public static void snapshotToConsole() {
-        System.out.println("[PZStorySnapshot] " + snapshot());
-    }
-
     /**
      * "none" | "analog" | "digital" - what the survivor can tell about the
      * time. The book's header obeys this: no watch, no clock.
@@ -156,20 +152,7 @@ public class StoryAPI {
         // New-game handshake, captured once from the very first page's state.
         if (!Campaign.hasOpening()) Campaign.openIfNew(opening(state));
 
-        // Small local models get a trimmed history; anything with a modern
-        // context window gets the whole book. A 300-word page is ~400 tokens,
-        // so even a very long campaign fits comfortably.
         Config.Profile p = Config.active();
-        // Only genuinely small-context servers need trimming. Gemini and
-        // the hosted OpenAI-compatible models carry the whole book fine;
-        // a local 8B on a laptop does not.
-        // Endpoint.isLocal parses the URL instead of searching it for a
-        // substring. The old test also matched https://localhost.evil.example
-        // and any URL with "localhost" anywhere in its path, which would have
-        // silently truncated a hosted campaign's history.
-        int budget = (p != null && "openai-compatible".equals(p.kind)
-                      && Endpoint.isLocal(p.baseUrl)) ? 24000 : 0;
-        String history = Campaign.history(budget);
 
         // The player's voice: standing preferences restated every time, plus
         // any directions filed since the last page.
@@ -193,33 +176,51 @@ public class StoryAPI {
         // what is new.
         String change = Delta.between(Campaign.lastState(), state);
 
+        String systemPrompt = Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
+                + World.RULES + "\n\n" + World.KNOX
+                + "\n\n" + StateReader.sandbox() + "\n\n"
+                + Campaign.fixedSpine();
+        String tailPrompt = Prompt.userTurn(
+                state, voice, change, Campaign.pageCount() == 0,
+                Delta.stillStanding(Campaign.lastState(), state));
+
+        // Input tokens cost money and the archive grows indefinitely. Reserve
+        // room for the fixed system and live state, then spend only what is
+        // left on history. Local laptop models retain their tighter budget;
+        // hosted profiles use the explicit maxInputChars setting rather than
+        // the old unlimited-history sentinel.
+        int inputLimit = p == null ? 24000 : p.maxInputChars;
+        if (p != null && "openai-compatible".equals(p.kind)
+                && Endpoint.isLocal(p.baseUrl)) {
+            inputLimit = Math.min(inputLimit, 24000);
+        }
+        int historyBudget = Math.max(0,
+                inputLimit - systemPrompt.length() - tailPrompt.length());
+        String history = historyBudget == 0 ? "" : Campaign.history(historyBudget);
+
         final String stamp = stamp();
         final String stateNow = state;
         String err = Llm.start(
-                Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
-                        + World.RULES + "\n\n" + World.KNOX
-                        + "\n\n" + StateReader.sandbox() + "\n\n"
-                        + Campaign.fixedSpine(),
+                systemPrompt,
                 history,                              // cached prefix
-                Prompt.userTurn(state, voice, change, Campaign.pageCount() == 0,
-                        Delta.stillStanding(Campaign.lastState(), state)),
-                all -> {
+                tailPrompt,
+                (generation, all) -> {
                     // The completed text arrives as an argument. It used to be
                     // fetched with Llm.text(), which read whatever the global
                     // buffer held at the moment the callback ran - a later
                     // request could have replaced it.
-                    // Fixed on the first page only; setPremise ignores
-                    // any later attempt to overwrite it.
-                    Campaign.setPremise(Prompt.premise(all));
-                    Campaign.addPage(Prompt.title(all), Prompt.body(all), stamp);
-                    Campaign.addCanon(Prompt.canon(all));
-                    Campaign.addTodo(Prompt.todo(all), "story");
-                    // Directions are spent only on success: a failed request
-                    // must not silently swallow what the player asked for.
-                    Campaign.clearDirections();
-                    // Only on success: a failed page must not consume
-                    // the interval it never got to describe.
-                    Campaign.rememberState(stateNow);
+                    // All campaign consequences cross one generation check
+                    // and one persistence boundary. A save load cannot land
+                    // between the check and these mutations.
+                    Campaign.commitGeneratedPage(
+                            generation,
+                            Prompt.premise(all),
+                            Prompt.title(all),
+                            Prompt.body(all),
+                            stamp,
+                            Prompt.canon(all),
+                            Prompt.todo(all),
+                            stateNow);
                 });
         if (err != null) Config.log("requestStoryPage refused: " + err);
         return err;
