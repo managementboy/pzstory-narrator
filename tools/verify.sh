@@ -55,8 +55,10 @@ if [ ! -f "$JAR" ]; then
     bad "jar present" "missing"
 else
     JAR_ENTRIES=$(unzip -Z1 "$JAR")
+    # GNU strings is absent from a standard Git for Windows installation;
+    # grep -a can extract the constant-pool UTF-8 release directly.
     JAR_REL=$(unzip -p "$JAR" de/fricke/pzstory/Version.class 2>/dev/null \
-              | strings | grep -xE '[0-9]+\.[0-9]+\.[0-9]+[-A-Za-z0-9.]*' | head -1 || true)
+              | grep -aoE '[0-9]+\.[0-9]+\.[0-9]+[-A-Za-z0-9.]*' | head -1 || true)
     if [ "$JAR_REL" = "$REL_JAVA" ]; then good "jar release matches source" "$JAR_REL"
     else bad "jar release matches source" "jar=$JAR_REL source=$REL_JAVA"; fi
 

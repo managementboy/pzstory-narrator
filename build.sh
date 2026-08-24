@@ -11,6 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 
 # ---------------------------------------------------------------- toolchain
 # Resolve the JDK without readlink -f, which stock macOS does not have.
@@ -54,8 +55,17 @@ done
 # javac wants ';' between classpath entries on Windows, ':' everywhere else.
 # Git Bash and MSYS report MINGW*/MSYS*; Cygwin reports CYGWIN*.
 case "$(uname -s 2>/dev/null || echo unknown)" in
-    MINGW*|MSYS*|CYGWIN*) CPSEP=';' ;;
-    *)                    CPSEP=':' ;;
+    MINGW*|MSYS*|CYGWIN*)
+        CPSEP=';'
+        # A native Windows javac does not understand Git Bash /c/... paths
+        # inside a compound -cp argument (automatic MSYS conversion does not
+        # reliably rewrite both entries).
+        LIB_FOR_JAVA="$(cygpath -w "$LIB")"
+        ;;
+    *)
+        CPSEP=':'
+        LIB_FOR_JAVA="$LIB"
+        ;;
 esac
 
 OUT="$ROOT/build/classes"
@@ -70,11 +80,13 @@ mkdir -p "$OUT" "$(dirname "$JAR")"
 
 echo "== compiling =="
 # Sorted, so the class list and therefore the archive order is stable.
-find "$ROOT/src" -name '*.java' | LC_ALL=C sort > "$ROOT/build/sources.txt"
+# Relative names keep javac's argument file valid when ROOT contains spaces
+# (common for OneDrive workspaces on Windows).
+find src -name '*.java' | LC_ALL=C sort > "$ROOT/build/sources.txt"
 "$JDK/javac" \
     -encoding UTF-8 \
     -Xlint:all,-serial \
-    -cp "$LIB/ZombieBuddy.jar${CPSEP}$LIB/projectzomboid.jar" \
+    -cp "$LIB_FOR_JAVA/ZombieBuddy.jar${CPSEP}$LIB_FOR_JAVA/projectzomboid.jar" \
     -d "$OUT" \
     @"$ROOT/build/sources.txt"
 
