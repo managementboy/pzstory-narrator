@@ -44,6 +44,8 @@ directory and restart the game; loading another save does not reload Java.
 
 Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
 
+- F8: toggle Testing Mode. It labels the current place in the world with its
+  visit count and shows up to four pending detected events on screen.
 - F9: provider-facing state, with privacy minimisation.
 - F10: provider connectivity test.
 - F11: local event journal.

@@ -9,6 +9,7 @@ public final class BridgeContractTest {
 
     public static void run() {
         String lua = read("mod/42/media/lua/client/PZStory/PZStoryBook.lua");
+        String probe = read("dev/PZStory_Probe.lua");
         String llm = read("src/de/fricke/pzstory/Llm.java");
         String api = read("src/de/fricke/pzstory/StoryAPI.java");
 
@@ -77,6 +78,21 @@ public final class BridgeContractTest {
         T.ok("Gemini thought summaries cannot enter page text",
                 llm.contains("pm.get(\"thought\")")
                         && llm.contains("j.put(\"includeThoughts\", false)"));
+
+        T.group("Testing Mode - local diagnostics overlay");
+        T.ok("F8 toggles Testing Mode",
+                probe.contains("Keyboard.KEY_F8")
+                        && probe.contains("toggleOverlay()"));
+        T.ok("overlay reads local diagnostics only",
+                probe.contains("decodeDiagnostic(\"worldMemory\")")
+                        && probe.contains("decodeDiagnostic(\"eventJournal\")"));
+        T.ok("raw place ids are compared but never rendered",
+                probe.contains("place.id == memory.currentPlaceId")
+                        && !method(probe, "local function drawOverlay()")
+                                .contains("currentPlaceId"));
+        T.ok("place visit count and pending events are visible",
+                probe.contains("VISIT \" .. visits")
+                        && probe.contains("PENDING EVENTS:"));
     }
 
     private static String read(String path) {
