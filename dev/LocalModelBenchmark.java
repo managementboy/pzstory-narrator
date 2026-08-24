@@ -257,7 +257,8 @@ public final class LocalModelBenchmark {
             }
         }
         for (String action : actionVocabulary) {
-            if (contains(answer, action) && !scene.allowedActions().contains(action)) {
+            if (containsAction(answer, action)
+                    && !scene.allowedActions().contains(action)) {
                 violations.add("unplayed survivor action: " + action);
             }
         }
@@ -293,6 +294,7 @@ public final class LocalModelBenchmark {
                 ? "none" : String.join(", ", scene.allowedPhysical());
         String actions = scene.allowedActions().isEmpty()
                 ? "none" : String.join(", ", scene.allowedActions());
+        String first = scene.first() ? "### PREMISE\n60-100 words\n" : "";
         return """
 
                 ### CLOSED-WORLD GROUNDING LEDGER
@@ -303,8 +305,23 @@ public final class LocalModelBenchmark {
                 Do not name any other physical thing. Do not make the survivor
                 perform a new action. Check every sentence against this ledger
                 before returning the required headings and nothing after TODO.
+
+                OUTPUT TEMPLATE -- headings are literal and alone on their line:
+                %s### TITLE
+                Three or four words
+                ### PAGE
+                40-300 words of prose
+                ### CANON
+                - [kind] one fact, or leave this section empty
+                ### TODO
+                - one unfinished intention, or leave this section empty
+                Never put a title, annotation or parentheses on a heading line.
+                Every non-empty CANON or TODO line starts with a hyphen. Return
+                the complete template and no text after the TODO content.
                 """.formatted(physical, actions,
-                        scene.forbidHistory() ? "none" : "only what STATE or CHANGE says");
+                        scene.forbidHistory() ? "none" : "only what STATE or CHANGE says",
+                        first);
+
     }
 
     private static String repairInstruction(Evaluation evaluation, Scene scene) {
@@ -413,6 +430,22 @@ public final class LocalModelBenchmark {
     private static boolean contains(String text, String phrase) {
         return Pattern.compile("(?iu)(?<![\\p{L}\\p{N}])"
                 + Pattern.quote(phrase) + "(?![\\p{L}\\p{N}])")
+                .matcher(text).find();
+    }
+
+    /** Action fixtures use neutral "they" but replies must be checked for all pronouns. */
+    private static boolean containsAction(String text, String phrase) {
+        if (!phrase.startsWith("they ")) return contains(text, phrase);
+        if (phrase.startsWith("they have ")) {
+            String predicate = phrase.substring("they have ".length());
+            return Pattern.compile("(?iu)(?<![\\p{L}\\p{N}])"
+                    + "(?:they\\s+have|he\\s+has|she\\s+has)\\s+"
+                    + Pattern.quote(predicate) + "(?![\\p{L}\\p{N}])")
+                    .matcher(text).find();
+        }
+        String predicate = phrase.substring("they ".length());
+        return Pattern.compile("(?iu)(?<![\\p{L}\\p{N}])(?:they|he|she)\\s+"
+                + Pattern.quote(predicate) + "(?![\\p{L}\\p{N}])")
                 .matcher(text).find();
     }
 

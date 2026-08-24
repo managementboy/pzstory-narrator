@@ -5,7 +5,7 @@
     "bed", "mattress", "toilet", "sink", "mirror", "bathtub", "shower",
     "refrigerator", "fridge", "freezer", "stove", "oven", "counter", "lamp",
     "toolbox", "tools", "hammer", "saw", "knife", "bottle", "water",
-    "can opener", "backpack", "duffel bag", "bandage", "car", "truck",
+    "can opener", "backpack", "pack", "duffel bag", "bandage", "car", "truck",
     "vehicle", "engine", "seat", "dashboard", "windshield", "road", "yard",
     "fence", "gate", "tree", "trees", "grass", "forest", "cabin", "house",
     "warehouse", "crate", "crates", "forklift", "body", "bodies", "corpse",
@@ -15,6 +15,7 @@
   "actionVocabulary": [
     "they sit", "they drink", "they eat", "they reach", "they walk",
     "they open", "they close", "they step", "they take", "they pick up",
+    "they have taken", "they have picked up", "they picks up", "they takes",
     "they move", "they turn", "they kneel", "they grip", "they touch",
     "they look outside", "they remember", "they recall", "they have killed",
     "they killed", "they bandage", "they have bandaged", "they enter",
