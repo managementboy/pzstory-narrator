@@ -159,6 +159,17 @@ public final class BridgeContractTest {
                 probe.contains("Keyboard.KEY_F4")
                         && probe.contains("Keyboard.KEY_F3")
                         && probe.contains("runLabSuite()"));
+        T.ok("upgraded key profiles retain physical defaults",
+                probe.contains("key == Keyboard.KEY_F4")
+                        && probe.contains("key == Keyboard.KEY_F3")
+                        && probe.contains("labKey > 0")
+                        && probe.contains("labRunKey > 0"));
+        T.ok("unattended harness has debug-console entry points",
+                probe.contains("PZStoryTestLabToggle = toggleLab")
+                        && probe.contains("PZStoryTestLabRun = runLabSuite"));
+        T.ok("debug saves automatically run read-only checks",
+                probe.contains("if debugEnabled() then")
+                        && probe.contains("runQuickChecks()"));
         T.ok("Test Lab is gated by game debug mode",
                 probe.contains("isDebugEnabled() == true")
                         && probe.contains("DEBUG MODE REQUIRED"));

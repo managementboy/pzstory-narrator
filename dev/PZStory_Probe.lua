@@ -696,6 +696,13 @@ local function drawLab()
     end
 end
 
+-- Named console entry points make the lab usable by unattended UI harnesses
+-- whose synthetic function keys are ignored by Project Zomboid's low-level
+-- input polling. They remain debug-probe functions and retain debugEnabled()
+-- gating before any fixture can be prepared.
+PZStoryTestLabToggle = toggleLab
+PZStoryTestLabRun = runLabSuite
+
 -- ------------------------------------------------------------------ wiring
 
 Events.OnGameStart.Add(function()
@@ -708,11 +715,27 @@ Events.OnGameStart.Add(function()
         pcall(function() say("profiles: " .. tostring(PZStory.profiles())) end)
     end
     takeSnapshot("OnGameStart")
+    -- A debug launch is itself an explicit request to inspect the build. Run
+    -- the read-only suite automatically so headless/unattended harnesses do
+    -- not depend on Project Zomboid accepting synthetic keyboard input.
+    if debugEnabled() then
+        lab.visible = true
+        runQuickChecks()
+    end
 end)
 
 Events.OnKeyPressed.Add(function(key)
-    if key == getCore():getKey(LAB_BIND) then toggleLab() end
-    if key == getCore():getKey(LAB_RUN_BIND) then runLabSuite() end
+    -- Existing keysB42.ini files do not gain a persisted value merely because
+    -- a mod registers a new binding. Honour an assigned value, but keep the
+    -- documented physical defaults usable on upgraded profiles.
+    local labKey = getCore():getKey(LAB_BIND)
+    local labRunKey = getCore():getKey(LAB_RUN_BIND)
+    if key == Keyboard.KEY_F4 or (labKey ~= nil and labKey > 0 and key == labKey) then
+        toggleLab()
+    end
+    if key == Keyboard.KEY_F3 or (labRunKey ~= nil and labRunKey > 0 and key == labRunKey) then
+        runLabSuite()
+    end
     if key == getCore():getKey(OVERLAY_BIND) then toggleOverlay() end
     if key == getCore():getKey(INBOX_BIND) then switchInbox() end
     if key == getCore():getKey(SNAPSHOT_BIND) then takeSnapshot("keypress") end

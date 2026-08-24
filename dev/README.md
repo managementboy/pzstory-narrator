@@ -15,6 +15,11 @@ axe and spawns two nearby zombies; the player still performs both real kills.
 
 The lab refuses to prepare fixtures outside game debug mode. Use a copied or
 disposable save: spawned items and zombies are normal save-world objects.
+For unattended harnesses whose synthetic function keys are not accepted by
+the game, the debug Lua console exposes `PZStoryTestLabToggle()` and
+`PZStoryTestLabRun()` with the same debug-mode safeguards.
+The read-only Quick Checks also run automatically after a save loads in game
+debug mode, so an unattended smoke test needs no synthetic key input.
 
 Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get six keys:
 
