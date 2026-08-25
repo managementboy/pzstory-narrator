@@ -23,12 +23,14 @@ Implemented:
 - Local diagnostics through `eventJournal()`, `worldMemory()` and the optional
   F11/F6 development probe and the F8 Testing Mode overlay.
 
-Remaining before this milestone is promoted from alpha:
+Post-2.0 follow-up work:
 
 - Validate observer cost and event cadence inside a real Build 42 game.
 - Promote the tested Event Inbox from Testing Mode into the normal device UI.
-- Redesign the F8 Testing Mode overlay with an opaque panel, wrapped lines, and
-  scale-aware spacing; it is close to unreadable at the current test resolution.
+- The F8 Testing Mode now uses a compact two-line indicator and writes its full
+  changing diagnostic view to `console.txt` with `[PZStoryLive]` markers. A
+  richer opaque, wrapped and scale-aware in-game panel remains optional future
+  work.
 
 ## Milestone 2 — Story memory
 

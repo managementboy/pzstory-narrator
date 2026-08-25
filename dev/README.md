@@ -27,6 +27,16 @@ Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get five diagnostic
 keys. The game's F3, F4 and F5 speed controls remain untouched:
 
 - **F8** — toggle the local Testing Mode overlay and pending Event Inbox.
+
+  While Testing Mode is open, every changed view is also written to
+  `console.txt` between `[PZStoryLive] BEGIN` and `[PZStoryLive] END` markers.
+  The log includes the current place, pending count, visible event summaries,
+  facts, threads, continuity evidence and Director status. It is the readable
+  second-screen/testing interface when the compact overlay is too small. Use
+  `grep -a '\[PZStoryLive\]' console.txt` (or an equivalent live log viewer).
+  The in-game display is intentionally reduced to a two-line capture indicator
+  during live sessions; detailed diagnostics belong in the log.
+
 - **F9** — dump the minimised, provider-facing live-state block to
   `console.txt`. This is the fastest way to answer "what did the narrator
   actually see?" without logging exact coordinates, account names or raw

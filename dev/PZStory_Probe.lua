@@ -10,6 +10,11 @@
   The debug-only guided Test Lab opens automatically and is controlled by its
   visible buttons.
 
+  While Testing Mode is open, every changed diagnostic snapshot is also
+  written to console.txt with the [PZStoryLive] tag. This is the authoritative
+  readable view for a second-screen observer; the overlay is only a compact
+  in-game indication.
+
   There is still no UI. The point of this file is to prove the whole chain
   end to end - key, network, SSE parsing, background thread, per-frame drain -
   before any of it is hidden behind a window.
@@ -182,6 +187,7 @@ end
 -- starts a provider request, and never displays raw room ids or coordinates.
 local overlay = {
     visible = false,
+    compact = true,
     nextRefresh = 0,
     place = nil,
     events = {},
@@ -192,7 +198,10 @@ local overlay = {
     pending = 0,
     error = nil,
     mode = "pending",
+    lastLogFingerprint = "",
 }
+
+local logOverlaySnapshot
 
 local function decodeDiagnostic(method)
     if PZStory == nil or type(PZStory[method]) ~= "function" then return nil end
@@ -313,6 +322,71 @@ local function refreshOverlay()
             end
         end
     end
+    if logOverlaySnapshot ~= nil then logOverlaySnapshot(false) end
+end
+
+local function cleanLogText(value)
+    return tostring(value or ""):gsub("[\r\n]+", " "):gsub("%s+", " ")
+end
+
+-- A complete, stable and grep-friendly companion to the compact overlay.
+-- It intentionally uses only the privacy-safe fields already projected into
+-- Testing Mode; local ids and exact coordinates remain in F11/F6 diagnostics.
+logOverlaySnapshot = function(force)
+    if overlay.error ~= nil then
+        local fingerprint = "error|" .. overlay.error
+        if force or fingerprint ~= overlay.lastLogFingerprint then
+            overlay.lastLogFingerprint = fingerprint
+            print("[PZStoryLive] ERROR | " .. overlay.error)
+        end
+        return
+    end
+
+    local lines = {}
+    local place = overlay.place and cleanLogText(overlay.place.label) or "unknown place"
+    local visits = overlay.place and overlay.place.visits or 0
+    table.insert(lines, "SUMMARY | view=" .. overlay.mode
+        .. " | pending=" .. overlay.pending .. " | place=" .. place
+        .. " | visits=" .. visits)
+
+    if overlay.director ~= nil then
+        local d = overlay.director
+        table.insert(lines, "DIRECTOR | mode=" .. cleanLogText(d.mode)
+            .. " | state=" .. cleanLogText(d.state)
+            .. " | evidence=" .. d.evidence .. "/" .. d.required
+            .. " | revealed=" .. d.revealed
+            .. " | objective=" .. cleanLogText(d.objective)
+            .. " | reason=" .. cleanLogText(d.reason))
+    end
+    for _, event in ipairs(overlay.events) do
+        local state = event.narrated > 0 and ("page " .. event.narrated) or "pending"
+        table.insert(lines, "EVENT | " .. cleanLogText(event.stamp)
+            .. " | " .. event.kind .. " | importance=" .. event.importance
+            .. " | " .. state .. " | " .. cleanLogText(event.summary))
+    end
+    for _, fact in ipairs(overlay.facts) do
+        table.insert(lines, "FACT | " .. fact.kind .. " | source=" .. fact.source
+            .. " | confidence=" .. fact.confidence
+            .. " | " .. (fact.superseded and "superseded" or "active")
+            .. " | " .. cleanLogText(fact.text))
+    end
+    for _, thread in ipairs(overlay.threads) do
+        table.insert(lines, "THREAD | " .. cleanLogText(thread.key)
+            .. " | " .. thread.status .. " | setup=" .. cleanLogText(thread.setup)
+            .. " | resolution=" .. cleanLogText(thread.resolution))
+    end
+    for _, entry in ipairs(overlay.continuity) do
+        table.insert(lines, "CONTINUITY | " .. entry.kind
+            .. " | observations=" .. entry.occurrences
+            .. " | " .. cleanLogText(entry.label))
+    end
+
+    local fingerprint = table.concat(lines, "\n")
+    if not force and fingerprint == overlay.lastLogFingerprint then return end
+    overlay.lastLogFingerprint = fingerprint
+    print("[PZStoryLive] BEGIN")
+    for _, line in ipairs(lines) do print("[PZStoryLive] " .. line) end
+    print("[PZStoryLive] END")
 end
 
 local function shadowText(font, x, y, text, r, g, b, centred)
@@ -330,6 +404,21 @@ local function drawOverlay()
     if not overlay.visible then return end
     local pl = getPlayer()
     if pl == nil then return end
+
+    -- Live sessions use the log as the detailed second-screen interface. Keep
+    -- the game itself clear: two short status lines prove that capture is on
+    -- without painting an unreadable diagnostic wall over the world.
+    if overlay.compact then
+        local playerNum = pl:getPlayerNum()
+        local x = getPlayerScreenLeft(playerNum) + 24
+        local y = getPlayerScreenTop(playerNum) + 70
+        shadowText(UIFont.Medium, x, y, "PZSTORY LIVE LOG", 0.45, 0.9, 1, false)
+        local place = overlay.place and overlay.place.label or "observing..."
+        shadowText(UIFont.Small, x, y + 23,
+            "PENDING " .. overlay.pending .. "  |  " .. place .. "  |  F8: stop",
+            1, 0.82, 0.35, false)
+        return
+    end
 
     -- Anchor the place label in the world above the survivor's current room.
     -- It therefore moves naturally with the camera and sits over the garage
@@ -458,6 +547,7 @@ local function toggleOverlay()
     overlay.visible = not overlay.visible
     overlay.nextRefresh = 0
     refreshOverlay()
+    if overlay.visible and logOverlaySnapshot ~= nil then logOverlaySnapshot(true) end
     notify("PZStory Testing Mode: " .. (overlay.visible and "ON" or "OFF"), true)
 end
 
@@ -469,6 +559,7 @@ local function switchInbox()
         or (overlay.mode == "threads" and "continuity" or "pending")))
     overlay.nextRefresh = 0
     refreshOverlay()
+    if logOverlaySnapshot ~= nil then logOverlaySnapshot(true) end
     notify("PZStory Inbox: " .. overlay.mode:upper(), true)
 end
 

@@ -86,7 +86,8 @@ Primary artifacts:
   than presenting them as a status list, and consecutive completed actions use
   the character's recorded pronouns even when game telemetry shortens the name.
 
-The workspace and installed JAR have SHA-256:
+At the overnight acceptance checkpoint, the workspace and installed JAR had
+SHA-256:
 `06BCA193D88ADE67EB4D3011F235D1ECE747DBF3603939AB2C178247A145CF4D`.
 
 ## Completion audit
@@ -99,25 +100,26 @@ The workspace and installed JAR have SHA-256:
 | Practical local latency | 400-turn p95 0.530 s, p99 0.566 s, max 0.880 s; stateful mean 0.61 s | complete |
 | Deterministic code integrity | lightweight and game-class suites both 638/638; release verifier clean | complete |
 | Install exactly what was tested | workspace and installed JAR hashes match the value above | complete |
-| Preserve work without publishing | branch remains local, dirty artifacts retained, no push or release rename | complete |
-| Live-play acceptance | requires the next fresh-game session | pending by design |
+| Preserve and publish verified work | development and evaluation artifacts committed as `99aa48b` | complete |
+| Live-play acceptance | test session concluded and release promoted in `733d229` | complete |
 
 ## Known limitations and next acceptance gate
 
 - Safe prose is intentionally more bounded and somewhat more templated than
-  the nicest unrestricted Qwen passages. Live play must judge whether that
-  trade-off feels good over several pages.
+  the nicest unrestricted Qwen passages. Longer play sessions should continue
+  to watch that trade-off over many pages.
 - Qwen still omits some requested fact IDs in 43.25% of the 400-turn planner
   turns. Missing
   slots are completed locally, so this does not affect safety or availability.
-- The F8 Testing Mode overlay remains close to unreadable at the tested display
-  scale. It needs a proper opaque panel, wrapping, and scale-aware layout after
-  the narrator acceptance test.
-- No release rename and no Git push were performed. Those remain explicitly
-  gated on successful live testing.
-- The overnight branch remains at commit `5fa5b42`; all 59 working-tree
-  entries and evaluation artifacts are preserved locally and unpushed.
+- The old full-screen F8 diagnostic overlay was close to unreadable at the
+  tested display scale. It has since been reduced to a compact indicator while
+  the complete changing view is written to `console.txt` between
+  `[PZStoryLive]` markers.
+- The verified work was pushed, and `733d229` promoted the narrator to stable
+  `2.0.0`. That commit is preserved in the ancestry of the 2.1 core branch and
+  is tagged `v2.0.0`.
 
-For the next test, fully restart Project Zomboid, start a fresh Sandbox game,
-and let KnoxOS open the first page. Then play and submit notes for the three
-opening goals: safe house, food for a few days, and clearing nearby blocks.
+For future regression tests, fully restart Project Zomboid, start a fresh
+Sandbox game, and let KnoxOS open the first page. Then play and submit notes
+for the three opening goals: safe house, food for a few days, and clearing
+nearby blocks.
