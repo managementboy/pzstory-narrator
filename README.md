@@ -175,6 +175,11 @@ You need **JDK 25 or newer** — Project Zomboid 42.20.3 compiles its own classe
 to bytecode major 69, so an older compiler cannot read them. Edit the `LIB`
 path in `build.sh` to point at your game folder.
 
+On Windows, run `build.sh` with **Git Bash**, not WSL, when using a Windows JDK;
+the script's MSYS branch supplies Windows classpath syntax. See
+[`BUILDING.md`](BUILDING.md) for a cold build, tests, reproducibility checks and
+managed-agent troubleshooting.
+
 Before committing a release binary, run:
 
 ```sh
