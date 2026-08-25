@@ -33,7 +33,7 @@ public final class Version {
      * Human-facing release. Bump for any shipped change.
      * MUST equal modversion in mod/42/mod.info.
      */
-    public static final String RELEASE = "2.0.0-alpha.13";
+    public static final String RELEASE = "2.0.0";
 
     /**
      * Lua/Java bridge compatibility. Bump when production Lua depends on a
@@ -66,7 +66,8 @@ public final class Version {
      *      and pre-page narrator-history bootstrap status
      *   14 KnoxOS read-only boot telemetry
      *   15 dynamic downloaded-model selection from LM Studio
-     *   16 explicit KnoxOS history retry; failed seeds no longer auto-resend
+     *   16 explicit KnoxOS history retry; failed seeds no longer auto-resend;
+     *      release 2.0.0 - stable promotion after acceptance testing
      */
     public static final String API = "16";
 }

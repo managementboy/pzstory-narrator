@@ -58,9 +58,9 @@ Read live from the running game, every time you press WRITE:
 Plus **the interval**: what changed since the last page. The snapshot is a
 photograph; the delta is what the page is actually about.
 
-## Version 2.0 alpha
+## Version 2.0
 
-The 2.0 development line adds memory of events between pages. A lightweight
+Version 2.0 adds memory of events between pages. A lightweight
 local observer records factual transitions such as kills, wounds, pursuit,
 vehicle use, utility failure, important noises, skill improvement and movement
 between stable places. It never starts a provider request by itself.
@@ -75,12 +75,11 @@ remain local; providers receive only human-readable labels and qualitative
 familiarity. Existing schema-1 campaigns migrate on their next successful
 write.
 
-This is `2.0.0-alpha.13`, an active 2.0 development build—not the completed 2.0
-feature set. It includes the event-aware campaign foundation, Campaign
-Director, and an experimental validated narrator. Character memory, the PDA
-timeline and opt-in world artifacts are tracked in
+This is the stable `2.0.0` release. It includes the event-aware campaign
+foundation, Campaign Director, and the opt-in safe narrator. Character memory,
+the PDA timeline and opt-in world artifacts remain tracked in
 [`docs/V2_ROADMAP.md`](docs/V2_ROADMAP.md). Use a copied save and follow
-[`docs/V2_ALPHA_TESTING.md`](docs/V2_ALPHA_TESTING.md).
+[`docs/V2_TESTING.md`](docs/V2_TESTING.md).
 
 The SETUP screen keeps the existing **classic** narrator as the default. The
 opt-in **safe (experimental)** narrator asks the model only to select opaque
@@ -185,13 +184,15 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`2.0.0-alpha.13`) is for people and changes whenever anything ships. **Bridge
-API** (`13`) changes
+(`2.0.0`) is for people and changes whenever anything ships. **Bridge API**
+(`16`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer
 forces a firmware mismatch, and an incompatible pairing can no longer load.
 Both live in
 `src/de/fricke/pzstory/Version.java` and are verified at build time.
+The next feature release will be `2.1.0`; compatible fixes to that line will
+use `2.1.1`, `2.1.2`, and so on.
 
 > **Java only reloads when Project Zomboid restarts.** Lua reloads when a save
 > loads. During development the two *will* drift, so the device checks the JAR

@@ -1,16 +1,15 @@
-# Live-testing PZStory 2.0 alpha
+# Live-testing PZStory 2.0
 
-This alpha changes the campaign schema and continuously observes a small local
+Version 2.0 changes the campaign schema and continuously observes a small local
 state sample. Use a copied save. Keep an untouched copy of the save and its
 `pzstory/campaign.json` outside the game save directory.
 
 ## Build and install
 
-The source release is `2.0.0-alpha.13` and bridge API is `13`. The tracked JAR
+The source release is `2.0.0` and bridge API is `16`. The tracked JAR
 must be rebuilt from the exact checkout whenever production Java changes.
 
 ```sh
-git switch version-2.0-development
 ./tools/test.sh
 PZ=/path/to/ProjectZomboid ./build.sh
 ./tools/verify.sh

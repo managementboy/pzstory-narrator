@@ -27,7 +27,7 @@ public class StoryAPI {
         // Kahlua wants a public no-arg constructor.
     }
 
-    /** Human-facing release, e.g. "2.0.0-alpha.1". For display and bug reports. */
+    /** Human-facing release, e.g. "2.0.0". For display and bug reports. */
     public static String version() {
         return Version.RELEASE;
     }

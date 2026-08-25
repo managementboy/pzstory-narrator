@@ -8,8 +8,8 @@ on the current PC. Java renders the page from observed game facts and uses a
 deterministic fallback whenever Qwen's plan is incomplete.
 
 This is the best current balance of atmosphere, grounding, latency, and local
-operation. It is ready for a fresh-game live acceptance test, not yet for a
-stable-version rename.
+operation. The subsequent live test session has now concluded, and this build
+was promoted to the stable `2.0.0` release without changing bridge API `16`.
 
 The unusable Qwen 2.5 7B download was removed. LM Studio now lists only the
 loaded 1.93 GB Qwen 2.5 3B narrator model plus the small embedding model.
