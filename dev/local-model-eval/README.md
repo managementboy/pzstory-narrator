@@ -66,9 +66,15 @@ Remove-Item Env:PZSTORY_BENCHMARK_API_KEY
 ```
 
 Available variants are `baseline`, `ledger`, `ledger-cold`,
-`compact-ledger`, `compact-cold` and `compact-repair`. Use `--split holdout`
-only after selecting a strategy on the development split. `--scene` accepts a
-comma-separated list of exact scene ids for a short diagnostic run.
+`compact-ledger`, `compact-cold`, `compact-repair`, `validated-catalog` and
+`validated-catalog-warm`. The validated variants ask the model for a JSON plan
+containing only supplied fact IDs and controlled enums, validate that plan, and
+render final text from state-backed slots. The warm form stress-tests fallback
+behavior; it is not the selected production candidate.
+
+Use `--split holdout` only after selecting a strategy on the development split.
+`--scene` accepts a comma-separated list of exact scene ids for a short
+diagnostic run.
 
 Never tune against the held-out replies and then continue calling them held
 out. Add new fixtures when a real failure is found, and periodically replace

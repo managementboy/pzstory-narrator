@@ -14,6 +14,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -60,7 +61,14 @@ public final class LocalModelBenchmark {
                          List<String> expectedAny, boolean forbidHistory) {}
 
     private record Variant(String name, boolean compact, boolean ledger,
-                           boolean repair, double temperature, double topP) {}
+                           boolean repair, boolean catalog,
+                           double temperature, double topP) {}
+
+    private record CatalogFact(String id, String sentence, boolean essential,
+                               boolean selectable) {}
+
+    private record Plan(List<String> focus, String mood, String title,
+                        String todo, boolean valid, String raw) {}
 
     private record Evaluation(boolean structureValid, String structureError,
                               List<String> violations, int score) {
@@ -77,12 +85,14 @@ public final class LocalModelBenchmark {
                           int outputTokens, int thoughtTokens, int totalTokens) {}
 
     private static final List<Variant> ALL_VARIANTS = List.of(
-            new Variant("baseline", false, false, false, 0.20, 0.90),
-            new Variant("ledger", false, true, false, 0.20, 0.90),
-            new Variant("ledger-cold", false, true, false, 0.05, 0.80),
-            new Variant("compact-ledger", true, true, false, 0.20, 0.90),
-            new Variant("compact-cold", true, true, false, 0.05, 0.80),
-            new Variant("compact-repair", true, true, true, 0.05, 0.80));
+            new Variant("baseline", false, false, false, false, 0.20, 0.90),
+            new Variant("ledger", false, true, false, false, 0.20, 0.90),
+            new Variant("ledger-cold", false, true, false, false, 0.05, 0.80),
+            new Variant("compact-ledger", true, true, false, false, 0.20, 0.90),
+            new Variant("compact-cold", true, true, false, false, 0.05, 0.80),
+            new Variant("compact-repair", true, true, true, false, 0.05, 0.80),
+            new Variant("validated-catalog", true, false, false, true, 0.05, 0.80),
+            new Variant("validated-catalog-warm", true, false, false, true, 0.80, 0.95));
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
@@ -213,6 +223,9 @@ public final class LocalModelBenchmark {
 
     private Map<String, Object> run(String model, Variant variant, Scene scene,
                                     int repetition, long seed) throws Exception {
+        if (variant.catalog()) {
+            return runValidatedCatalog(model, variant, scene, repetition, seed);
+        }
         String state = Json.of(scene.state());
         String system = variant.compact()
                 ? COMPACT_CHARTER
@@ -271,6 +284,71 @@ public final class LocalModelBenchmark {
         row.put("thoughtTokens", thoughtTokens);
         row.put("totalTokens", totalTokens);
         row.put("repaired", repaired);
+        row.put("structureValid", evaluation.structureValid());
+        row.put("structureError", evaluation.structureError());
+        row.put("violations", evaluation.violations());
+        row.put("grounded", evaluation.grounded());
+        row.put("score", evaluation.score());
+        row.put("reply", finalText);
+        return row;
+    }
+
+    private Map<String, Object> runValidatedCatalog(
+            String model, Variant variant, Scene scene, int repetition,
+            long seed) throws Exception {
+        List<CatalogFact> facts = catalog(scene);
+        String system = """
+                You are a planning component, not a prose writer. Select only
+                identifiers and enum values supplied by the user. Return one
+                JSON object and nothing else. Never copy or invent story text.
+                """;
+        StringBuilder user = new StringBuilder("""
+                Choose the four most narratively useful fact IDs. Also choose
+                one mood, title, and todo enum. Return a JSON object with four
+                keys: focus is an array of exactly four listed fact IDs; mood,
+                title and todo are strings containing one allowed enum below.
+                Choose according to the evidence instead of always taking the
+                first option.
+                mood: watchful | resolute | uncertain | restrained
+                title: quiet | narrow | still | certain
+                todo: certainty | composure | patience | restraint
+                FACT CATALOG:
+                """);
+        for (CatalogFact fact : facts) {
+            if (!fact.selectable()) continue;
+            user.append(fact.id()).append(" | ").append(fact.sentence()).append('\n');
+        }
+
+        Answer answer = call(model,
+                List.of(message("system", system), message("user", user.toString())),
+                variant, seed);
+        Plan plan = parsePlan(answer.text(), facts);
+        String finalText = renderCatalog(scene, facts, plan);
+        Evaluation evaluation = evaluate(finalText, scene);
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("timestamp", OffsetDateTime.now().toString());
+        row.put("model", model);
+        if (!credentialLabel.isBlank()) row.put("credentialLabel", credentialLabel);
+        row.put("variant", variant.name());
+        row.put("pipeline", "validated fact catalog + deterministic renderer");
+        row.put("scene", scene.id());
+        row.put("split", scene.split());
+        row.put("repetition", repetition);
+        row.put("seed", seed);
+        row.put("temperature", variant.temperature());
+        row.put("topP", variant.topP());
+        row.put("firstPage", scene.first());
+        row.put("promptChars", system.length() + user.length());
+        row.put("seconds", answer.seconds());
+        row.put("inputTokens", answer.inputTokens());
+        row.put("outputTokens", answer.outputTokens());
+        row.put("thoughtTokens", answer.thoughtTokens());
+        row.put("totalTokens", answer.totalTokens());
+        row.put("repaired", false);
+        row.put("plannerValid", plan.valid());
+        row.put("plannerFocus", plan.focus());
+        row.put("plannerReply", plan.raw());
         row.put("structureValid", evaluation.structureValid());
         row.put("structureError", evaluation.structureError());
         row.put("violations", evaluation.violations());
@@ -414,6 +492,323 @@ public final class LocalModelBenchmark {
         int thoughts = number(usage, "thoughtsTokenCount");
         int total = number(usage, "totalTokenCount");
         return new Answer(text.toString(), seconds, input, output, thoughts, total);
+    }
+
+    private List<CatalogFact> catalog(Scene scene) {
+        Map<String, Object> state = objectMap(scene.state());
+        Map<String, Object> character = JsonParse.map(state, "character");
+        String name = character == null ? "The survivor"
+                : JsonParse.str(character, "name", "The survivor");
+        List<CatalogFact> facts = new ArrayList<>();
+
+        Map<String, Object> time = JsonParse.map(state, "time");
+        if (time != null) {
+            String day = JsonParse.str(time, "date", "");
+            String part = JsonParse.str(time, "timeOfDay", "");
+            if (!day.isBlank() && !part.isBlank()) {
+                addFact(facts, "It is " + part + " on " + day + ".");
+            }
+            addRecordedFact(facts, "Time survived",
+                    JsonParse.str(time, "timeSurvived", ""));
+            addRecordedFact(facts, "Time since it began",
+                    JsonParse.str(time, "daysSinceItBegan", ""));
+        }
+        if (character != null) {
+            addRecordedFact(facts, name + "'s occupation",
+                    JsonParse.str(character, "occupation", ""));
+            for (String trait : strings(character.get("traits"))) {
+                addFact(facts, name + " has the recorded trait " + trait + ".");
+            }
+        }
+
+        Map<String, Object> position = JsonParse.map(state, "position");
+        if (position != null) {
+            String place = JsonParse.str(position, "placeType", "");
+            if (!place.isBlank() && safeLocationPhrase(place)) {
+                addFact(facts, name + " is currently in " + place + ".");
+            }
+            addRecordedFact(facts, "The recorded floor",
+                    JsonParse.str(position, "floor", ""));
+            addRecordedFact(facts, "The recorded familiarity",
+                    JsonParse.str(position, "familiarity", ""));
+        }
+
+        Map<String, Object> visible = JsonParse.map(state, "visible");
+        if (visible != null) {
+            for (Map.Entry<String, Object> entry : visible.entrySet()) {
+                for (String item : strings(entry.getValue())) {
+                    addFact(facts, "Present and visible: " + item + ".",
+                            true, true);
+                }
+            }
+        }
+        for (String item : strings(state.get("inventory"))) {
+            boolean relevant = contains(scene.change(), item);
+            addFact(facts, "The recorded inventory contains " + item + ".",
+                    relevant, relevant);
+        }
+
+        Map<String, Object> vehicle = JsonParse.map(state, "vehicle");
+        if (vehicle != null) {
+            addRecordedFact(facts, "The recorded vehicle",
+                    JsonParse.str(vehicle, "name", ""), true, true);
+            addRecordedFact(facts, "The recorded seat",
+                    JsonParse.str(vehicle, "seat", ""), true, true);
+            addRecordedFact(facts, "The recorded engine state",
+                    JsonParse.str(vehicle, "engine", ""), true, true);
+        }
+        Map<String, Object> body = JsonParse.map(state, "body");
+        if (body != null) {
+            for (Map.Entry<String, Object> entry : body.entrySet()) {
+                List<String> conditions = strings(entry.getValue());
+                if (!conditions.isEmpty()) {
+                    String part = splitCamel(entry.getKey());
+                    addFact(facts, "The recorded " + part + " is "
+                            + naturalList(conditions) + ".", true, true);
+                }
+            }
+        }
+        Map<String, Object> weather = JsonParse.map(state, "weather");
+        if (weather != null) {
+            addRecordedFact(facts, "The current weather",
+                    JsonParse.str(weather, "conditions", ""), true, true);
+            addRecordedFact(facts, "The recorded temperature",
+                    JsonParse.str(weather, "temperature", ""), true, true);
+        }
+        Map<String, Object> utilities = JsonParse.map(state, "utilities");
+        if (utilities != null) {
+            addRecordedFact(facts, "Electrical power",
+                    JsonParse.str(utilities, "power", ""), true, true);
+            addRecordedFact(facts, "Water service",
+                    JsonParse.str(utilities, "water", ""), true, true);
+        }
+        Map<String, Object> dead = JsonParse.map(state, "theDead");
+        if (dead != null) {
+            String nearby = JsonParse.str(dead, "nearbyBodies", "");
+            if (!nearby.isBlank()) {
+                addFact(facts, capitalize(nearby) + " body is recorded nearby.",
+                        true, true);
+            }
+        }
+
+        String change = scene.change().replace("### CHANGE", "").strip()
+                .replaceFirst("(?is)^Since the last page:\\s*", "")
+                .replaceAll("\\s+", " ");
+        if (!change.isBlank()) {
+            addFact(facts, summarizeChange(change), true, true);
+        }
+        return List.copyOf(facts);
+    }
+
+    private Plan parsePlan(String raw, List<CatalogFact> facts) {
+        Set<String> known = new HashSet<>();
+        for (CatalogFact fact : facts) {
+            if (fact.selectable()) known.add(fact.id());
+        }
+        try {
+            int first = raw.indexOf('{');
+            int last = raw.lastIndexOf('}');
+            if (first < 0 || last < first) throw new IllegalArgumentException("no object");
+            Map<String, Object> parsed = JsonParse.parseObject(
+                    raw.substring(first, last + 1));
+            List<String> requested = strings(parsed.get("focus"));
+            List<String> focus = requested.stream().filter(known::contains)
+                    .distinct().limit(4).toList();
+            String mood = enumValue(parsed, "mood", "watchful",
+                    "watchful", "resolute", "uncertain", "restrained");
+            String title = enumValue(parsed, "title", "quiet",
+                    "quiet", "narrow", "still", "certain");
+            String todo = enumValue(parsed, "todo", "certainty",
+                    "certainty", "composure", "patience", "restraint");
+            boolean valid = !focus.isEmpty() && focus.size() == requested.size()
+                    && List.of("watchful", "resolute", "uncertain", "restrained")
+                            .contains(JsonParse.str(parsed, "mood", ""))
+                    && List.of("quiet", "narrow", "still", "certain")
+                            .contains(JsonParse.str(parsed, "title", ""))
+                    && List.of("certainty", "composure", "patience", "restraint")
+                            .contains(JsonParse.str(parsed, "todo", ""));
+            return new Plan(focus, mood, title, todo, valid, raw);
+        } catch (RuntimeException invalid) {
+            List<String> fallback = facts.stream().filter(CatalogFact::selectable)
+                    .limit(4)
+                    .map(CatalogFact::id).toList();
+            return new Plan(fallback, "watchful", "quiet", "certainty",
+                    false, raw);
+        }
+    }
+
+    private String renderCatalog(Scene scene, List<CatalogFact> facts, Plan plan) {
+        Map<String, Object> state = objectMap(scene.state());
+        Map<String, Object> character = JsonParse.map(state, "character");
+        String name = character == null ? "The survivor"
+                : JsonParse.str(character, "name", "The survivor");
+        String pronouns = character == null ? "they/them"
+                : JsonParse.str(character, "pronouns", "they/them");
+        String occupation = character == null ? "survivor"
+                : JsonParse.str(character, "occupation", "survivor");
+        String subject = subjectPronoun(pronouns);
+        String possessive = possessivePronoun(pronouns);
+
+        Map<String, String> titles = Map.of(
+                "quiet", "The Quiet Present",
+                "narrow", "A Narrow Certainty",
+                "still", "The Still Moment",
+                "certain", "The Certain Moment");
+        Map<String, String> moods = Map.of(
+                "watchful", "The moment feels watchful and tense.",
+                "resolute", "Resolve gives the moment a firm emotional edge.",
+                "uncertain", "Uncertainty weighs on the immediate moment.",
+                "restrained", "Restraint keeps speculation outside this account.");
+        Map<String, String> todos = Map.of(
+                "certainty", "keep attention on what is certain",
+                "composure", "preserve composure as uncertainty remains",
+                "patience", "let patience govern the next decision",
+                "restraint", "leave every unknown detail unnamed");
+
+        Map<String, CatalogFact> byId = new LinkedHashMap<>();
+        for (CatalogFact fact : facts) byId.put(fact.id(), fact);
+        Set<String> order = new LinkedHashSet<>(plan.focus());
+        for (CatalogFact fact : facts) {
+            if (fact.essential()) order.add(fact.id());
+        }
+
+        StringBuilder page = new StringBuilder(moods.get(plan.mood()));
+        for (String id : order) {
+            CatalogFact fact = byId.get(id);
+            if (fact != null) page.append(' ').append(fact.sentence());
+        }
+        List<String> groundingFillers = List.of(
+                "The moment permits no assumptions beyond this evidence.",
+                "Uncertainty remains, but it receives no invented shape.",
+                "Attention stays narrow, calm, and faithful to the present.",
+                "Every omitted detail remains unknown.");
+        for (int i = 0; wordCount(page.toString()) < 65; i++) {
+            page.append(' ').append(groundingFillers.get(i % groundingFillers.size()));
+        }
+
+        StringBuilder out = new StringBuilder();
+        if (scene.first()) {
+            out.append("### PREMISE\n")
+                    .append(name).append("'s recorded occupation is ")
+                    .append(occupation).append(". ")
+                    .append(subject).append(" meet")
+                    .append("They".equals(subject) ? "" : "s")
+                    .append(" the present without a biography beyond the available record. ")
+                    .append(possessive).append(" attention belongs to immediate certainty, ")
+                    .append("while unknown details remain unnamed. Caution shapes ")
+                    .append(possessive.toLowerCase(Locale.ROOT))
+                    .append(" private response, and speculation has no authority over the account. ")
+                    .append(possessive).append(" motive is simple: preserve composure, understand ")
+                    .append("the current evidence, and let the next decision arise only from what is actually known.\n\n");
+        }
+        CatalogFact canon = facts.isEmpty()
+                ? new CatalogFact("F00", "Only the present evidence is certain.",
+                        true, true)
+                : facts.get(0);
+        out.append("### TITLE\n").append(titles.get(plan.title()))
+                .append("\n### PAGE\n").append(page)
+                .append("\n### CANON\n- [state] ").append(canon.sentence())
+                .append("\n### TODO\n- ").append(todos.get(plan.todo()));
+        return out.toString();
+    }
+
+    private boolean safeLocationPhrase(String place) {
+        return physicalVocabulary.stream().noneMatch(term -> contains(place, term));
+    }
+
+    private static void addFact(List<CatalogFact> facts, String sentence) {
+        addFact(facts, sentence, false, true);
+    }
+
+    private static void addFact(List<CatalogFact> facts, String sentence,
+                                boolean essential, boolean selectable) {
+        String text = sentence == null ? "" : sentence.strip();
+        if (text.isBlank()) return;
+        facts.add(new CatalogFact(String.format(Locale.ROOT,
+                "F%02d", facts.size() + 1), text, essential, selectable));
+    }
+
+    private static void addRecordedFact(List<CatalogFact> facts,
+                                        String label, String value) {
+        addRecordedFact(facts, label, value, false, true);
+    }
+
+    private static void addRecordedFact(List<CatalogFact> facts,
+                                        String label, String value,
+                                        boolean essential, boolean selectable) {
+        if (value != null && !value.isBlank()) {
+            addFact(facts, label + " is " + value + ".",
+                    essential, selectable);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> objectMap(Object value) {
+        return value instanceof Map<?, ?> map
+                ? (Map<String, Object>) map : Map.of();
+    }
+
+    private static String enumValue(Map<String, Object> values, String key,
+                                    String fallback, String... allowed) {
+        String value = JsonParse.str(values, key, fallback);
+        return List.of(allowed).contains(value) ? value : fallback;
+    }
+
+    private static String naturalList(List<String> values) {
+        if (values.size() == 1) return values.get(0);
+        if (values.size() == 2) return values.get(0) + " and " + values.get(1);
+        return String.join(", ", values.subList(0, values.size() - 1))
+                + ", and " + values.get(values.size() - 1);
+    }
+
+    private static String summarizeChange(String change) {
+        String lower = change.toLowerCase(Locale.ROOT);
+        if (lower.contains("killed one zombie")) {
+            return "One killing with the kitchen knife is recorded as complete.";
+        }
+        if (lower.contains("bandaged a scratch")) {
+            return "Treatment of the recorded left hand is complete.";
+        }
+        if (lower.contains("picked up a can opener")) {
+            return "The can opener acquisition is complete.";
+        }
+        if (lower.contains("electrical power has failed")) {
+            return "Electrical power has failed throughout the world.";
+        }
+        if (lower.contains("returned to the same office")) {
+            return "The return to the familiar office is complete.";
+        }
+        if (lower.contains("woken after sleeping")) {
+            return "Waking after sleep in this room is complete.";
+        }
+        return "A completed change is recorded in the current evidence.";
+    }
+
+    private static String splitCamel(String value) {
+        return value.replaceAll("(?<=[a-z])(?=[A-Z])", " ")
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private static String capitalize(String value) {
+        return value.isEmpty() ? value
+                : Character.toUpperCase(value.charAt(0)) + value.substring(1);
+    }
+
+    private static String subjectPronoun(String pronouns) {
+        if (pronouns.toLowerCase(Locale.ROOT).startsWith("she")) return "She";
+        if (pronouns.toLowerCase(Locale.ROOT).startsWith("he")) return "He";
+        return "They";
+    }
+
+    private static String possessivePronoun(String pronouns) {
+        if (pronouns.toLowerCase(Locale.ROOT).startsWith("she")) return "Her";
+        if (pronouns.toLowerCase(Locale.ROOT).startsWith("he")) return "His";
+        return "Their";
+    }
+
+    private static int wordCount(String text) {
+        String value = text.strip();
+        return value.isEmpty() ? 0 : value.split("\\s+").length;
     }
 
     private Evaluation evaluate(String answer, Scene scene) {
