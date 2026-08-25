@@ -1,0 +1,537 @@
+{
+  "physicalVocabulary": [
+    "window", "windows", "door", "doors", "garage door", "table", "stool",
+    "chair", "chairs", "shelf", "shelves", "cabinet", "cupboard", "drawer",
+    "bed", "mattress", "toilet", "sink", "mirror", "bathtub", "shower",
+    "refrigerator", "fridge", "freezer", "stove", "oven", "counter", "lamp",
+    "toolbox", "tools", "hammer", "saw", "knife", "bottle", "water",
+    "can opener", "backpack", "pack", "duffel bag", "bandage", "car", "truck",
+    "vehicle", "engine", "seat", "dashboard", "windshield", "road", "yard",
+    "fence", "gate", "tree", "trees", "grass", "forest", "cabin", "house",
+    "warehouse", "crate", "crates", "forklift", "body", "bodies", "corpse",
+    "zombie", "zombies", "blood", "hand", "arm", "fire", "campfire",
+    "matches", "axe", "umbrella", "radio", "map", "photograph", "gun"
+  ],
+  "actionVocabulary": [
+    "they sit", "they drink", "they eat", "they reach", "they walk",
+    "they open", "they close", "they step", "they take", "they pick up",
+    "they have taken", "they have picked up", "they picks up", "they takes",
+    "they move", "they turn", "they kneel", "they grip", "they touch",
+    "they look outside", "they remember", "they recall", "they have killed",
+    "they killed", "they bandage", "they have bandaged", "they enter",
+    "they exit", "they wake", "they have woken", "they light"
+  ],
+  "historyVocabulary": [
+    "last night", "yesterday", "before the outbreak", "before all this",
+    "years ago", "used to", "once worked", "came here", "arrived here",
+    "drove here", "survived the night", "has survived a night", "remembers",
+    "recalls", "a woman they knew", "a man they knew", "their family"
+  ],
+  "scenes": [
+    {
+      "id": "dev-first-garage-sparse",
+      "split": "dev",
+      "first": true,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "state": {
+        "character": {"name":"Alex Morgan","pronouns":"they/them","occupation":"Unemployed","traits":[]},
+        "time": {"date":"July 9, 1993","timeOfDay":"morning","timeSurvived":"less than a day","daysSinceItBegan":"less than one day"},
+        "position": {"placeType":"garage storage","indoors":true,"floor":"ground floor"},
+        "visible": {"furniture":["wooden table","stool","metal shelves"],"doors":["closed garage door"]},
+        "inventory":["hammer","bottle of water"],
+        "theDead":{"nearbyBodies":"one"}
+      },
+      "allowedPhysical":["table","stool","shelves","door","garage door","hammer","bottle","water","body"],
+      "allowedActions":[],
+      "forbidden":["carpenter","pickup","gunshot","red shirt"],
+      "expectedAny":["garage","hammer","shelves"]
+    },
+    {
+      "id": "dev-bathroom-still",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Maya Chen","pronouns":"she/her","occupation":"Nurse"},
+        "time":{"date":"July 11, 1993","timeOfDay":"afternoon","timeSurvived":"a few days"},
+        "position":{"placeType":"bathroom","indoors":true},
+        "visible":{"furniture":["toilet","sink","mirror"],"doors":["closed interior door"]},
+        "inventory":["bandage"]
+      },
+      "allowedPhysical":["toilet","sink","mirror","door","bandage"],
+      "allowedActions":[],
+      "forbidden":["looks through","turns the tap"],
+      "expectedAny":["bathroom","mirror","sink"]
+    },
+    {
+      "id": "dev-storage-room-no-bed",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Jon Bell","pronouns":"he/him","occupation":"Mechanic"},
+        "time":{"date":"July 12, 1993","timeOfDay":"evening","timeSurvived":"several days"},
+        "position":{"placeType":"upstairs storage room","indoors":true},
+        "visible":{"furniture":["empty shelves"],"items":["folded map"]},
+        "inventory":["hammer"]
+      },
+      "allowedPhysical":["shelves","map","hammer"],
+      "allowedActions":[],
+      "forbidden":["bedroom","pillow","blanket"],
+      "expectedAny":["storage","map","shelves"]
+    },
+    {
+      "id": "dev-kitchen-no-appliances",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Ruth Price","pronouns":"she/her","occupation":"Teacher"},
+        "time":{"date":"July 14, 1993","timeOfDay":"morning","timeSurvived":"about a week"},
+        "position":{"placeType":"stripped kitchen","indoors":true},
+        "visible":{"furniture":["counter","sink","wooden table"],"items":[]},
+        "inventory":["bottle of water"]
+      },
+      "allowedPhysical":["counter","sink","table","bottle","water"],
+      "allowedActions":[],
+      "forbidden":["food","dishes","tap"],
+      "expectedAny":["kitchen","counter","sink"]
+    },
+    {
+      "id": "dev-road-no-vehicle",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Eli Ward","pronouns":"he/him","occupation":"Park Ranger"},
+        "time":{"date":"July 16, 1993","timeOfDay":"midday","timeSurvived":"about a week"},
+        "position":{"placeType":"rural road","indoors":false},
+        "visible":{"terrain":["road","grass","trees"],"vehicles":[]},
+        "inventory":["axe"]
+      },
+      "allowedPhysical":["road","grass","trees","axe"],
+      "allowedActions":[],
+      "forbidden":["telephone pole","farmhouse","traffic"],
+      "expectedAny":["road","grass","trees"]
+    },
+    {
+      "id": "dev-inside-car",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Dana Cole","pronouns":"they/them","occupation":"Burglar"},
+        "time":{"date":"July 18, 1993","timeOfDay":"night","timeSurvived":"more than a week"},
+        "position":{"placeType":"inside a vehicle","indoors":false},
+        "vehicle":{"name":"Chevalier Dart","seat":"driver","engine":"off"},
+        "visible":{"vehicles":["Chevalier Dart"]},
+        "inventory":["can opener"]
+      },
+      "allowedPhysical":["car","vehicle","engine","seat","can opener"],
+      "allowedActions":[],
+      "forbidden":["keys","fuel gauge","steering wheel"],
+      "expectedAny":["Chevalier Dart","engine"]
+    },
+    {
+      "id": "dev-recent-kill",
+      "split": "dev",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSince the last page: they have killed one zombie with the kitchen knife. The action is complete.",
+      "state": {
+        "character":{"name":"Maya Chen","pronouns":"she/her","occupation":"Nurse"},
+        "time":{"date":"July 11, 1993","timeOfDay":"evening","timeSurvived":"a few days"},
+        "position":{"placeType":"house hallway","indoors":true},
+        "visible":{"bodies":["one zombie body"],"doors":["closed front door"]},
+        "inventory":["kitchen knife"]
+      },
+      "allowedPhysical":["zombie","body","door","knife","blood"],
+      "allowedActions":["they have killed","they killed"],
+      "forbidden":["gun","second zombie"],
+      "expectedAny":["killed","knife","body"]
+    },
+    {
+      "id": "dev-bandaged-hand",
+      "split": "dev",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSince the last page: they have bandaged a scratch on the left hand. Treatment is complete.",
+      "state": {
+        "character":{"name":"Jon Bell","pronouns":"he/him","occupation":"Mechanic"},
+        "time":{"date":"July 12, 1993","timeOfDay":"night","timeSurvived":"several days"},
+        "position":{"placeType":"dark office","indoors":true},
+        "body":{"leftHand":["scratched","bandaged","painful"]},
+        "visible":{"furniture":["chair"]},
+        "inventory":[]
+      },
+      "allowedPhysical":["hand","bandage","chair","blood"],
+      "allowedActions":["they bandage","they have bandaged"],
+      "forbidden":["bite","infection","amputation"],
+      "expectedAny":["hand","bandage","scratch"]
+    },
+    {
+      "id": "dev-acquired-can-opener",
+      "split": "dev",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSince the last page: they have picked up a can opener. The action is complete.",
+      "state": {
+        "character":{"name":"Ruth Price","pronouns":"she/her","occupation":"Teacher"},
+        "time":{"date":"July 14, 1993","timeOfDay":"afternoon","timeSurvived":"about a week"},
+        "position":{"placeType":"pantry","indoors":true},
+        "visible":{"furniture":["shelves"]},
+        "inventory":["can opener"]
+      },
+      "allowedPhysical":["shelves","can opener"],
+      "allowedActions":["they pick up","they take"],
+      "forbidden":["canned food","tin","drawer"],
+      "expectedAny":["can opener","picked up"]
+    },
+    {
+      "id": "dev-visible-water-no-drink",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Alex Morgan","pronouns":"they/them","occupation":"Unemployed"},
+        "time":{"date":"July 9, 1993","timeOfDay":"afternoon","timeSurvived":"less than a day"},
+        "position":{"placeType":"utility room","indoors":true},
+        "visible":{"items":["bottle of water"],"furniture":["metal shelves"]},
+        "inventory":["hammer"]
+      },
+      "allowedPhysical":["bottle","water","shelves","hammer"],
+      "allowedActions":[],
+      "forbidden":["thirst","cap"],
+      "expectedAny":["water","shelves"]
+    },
+    {
+      "id": "dev-first-day-no-night",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Alex Morgan","pronouns":"they/them","occupation":"Unemployed"},
+        "time":{"date":"July 9, 1993","timeOfDay":"evening","timeSurvived":"less than a day","daysSinceItBegan":"less than one day"},
+        "position":{"placeType":"empty living room","indoors":true},
+        "visible":{"furniture":["chair"],"doors":["closed interior door"]},
+        "inventory":[]
+      },
+      "allowedPhysical":["chair","door"],
+      "allowedActions":[],
+      "forbidden":["morning before","woke yesterday"],
+      "expectedAny":["chair","evening"]
+    },
+    {
+      "id": "dev-power-failure",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSince the last page: electrical power has failed throughout the world.",
+      "state": {
+        "character":{"name":"Dana Cole","pronouns":"they/them","occupation":"Burglar"},
+        "time":{"date":"July 25, 1993","timeOfDay":"night","timeSurvived":"several weeks"},
+        "position":{"placeType":"shop back room","indoors":true},
+        "utilities":{"power":"off","water":"on"},
+        "visible":{"furniture":["counter"],"doors":["closed door"]},
+        "inventory":["flashlight"]
+      },
+      "allowedPhysical":["counter","door","water"],
+      "allowedActions":[],
+      "forbidden":["generator","flashlight","battery","switch"],
+      "expectedAny":["power","dark"]
+    },
+    {
+      "id": "dev-rain-no-umbrella",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Eli Ward","pronouns":"he/him","occupation":"Park Ranger"},
+        "time":{"date":"July 16, 1993","timeOfDay":"afternoon","timeSurvived":"about a week"},
+        "weather":{"conditions":"heavy rain","temperature":"mild"},
+        "position":{"placeType":"forest clearing","indoors":false},
+        "visible":{"terrain":["grass","trees"]},
+        "inventory":["axe"]
+      },
+      "allowedPhysical":["grass","trees","forest","axe"],
+      "allowedActions":[],
+      "forbidden":["raincoat","puddle","mud"],
+      "expectedAny":["rain","trees"]
+    },
+    {
+      "id": "dev-returned-same-room",
+      "split": "dev",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": false,
+      "change":"### CHANGE\nSince the last page: they have returned to the same office visited earlier. No other action completed.",
+      "state": {
+        "character":{"name":"Ruth Price","pronouns":"she/her","occupation":"Teacher"},
+        "time":{"date":"July 20, 1993","timeOfDay":"morning","timeSurvived":"more than a week"},
+        "position":{"placeType":"familiar office","indoors":true,"familiarity":"visited before"},
+        "visible":{"furniture":["desk","chair"],"doors":["open interior door"]},
+        "inventory":[]
+      },
+      "allowedPhysical":["chair","door"],
+      "allowedActions":["they walk","they step","they enter"],
+      "forbidden":["computer","papers","telephone","safehouse"],
+      "expectedAny":["familiar","returned","recognises"]
+    },
+    {
+      "id": "dev-woke-in-room",
+      "split": "dev",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": false,
+      "change":"### CHANGE\nSince the last page: they have woken after sleeping in this room.",
+      "state": {
+        "character":{"name":"Maya Chen","pronouns":"she/her","occupation":"Nurse"},
+        "time":{"date":"July 13, 1993","timeOfDay":"morning","timeSurvived":"several days"},
+        "position":{"placeType":"small bedroom","indoors":true,"familiarity":"slept here once"},
+        "visible":{"furniture":["bed","chair"],"doors":["closed door"]},
+        "inventory":["bottle of water"]
+      },
+      "allowedPhysical":["bed","chair","door","bottle","water"],
+      "allowedActions":["they wake","they have woken","they sit"],
+      "forbidden":["dream","alarm clock","nightmare","safehouse"],
+      "expectedAny":["woken","bed","morning"]
+    },
+    {
+      "id": "dev-nested-bandage-transfer",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "change":"### CHANGE\nThe bandage was moved between two carried bags. Nothing was acquired or lost.",
+      "state": {
+        "character":{"name":"Lee Tran","pronouns":"they/them","occupation":"Carpenter"},
+        "time":{"date":"July 21, 1993","timeOfDay":"afternoon","timeSurvived":"nearly two weeks"},
+        "position":{"placeType":"stock room","indoors":true},
+        "inventory":[{"container":"backpack","items":[]},{"container":"duffel bag","items":["bandage"]}],
+        "visible":{"furniture":["metal shelves"]}
+      },
+      "allowedPhysical":["backpack","duffel bag","bandage","shelves"],
+      "allowedActions":[],
+      "forbidden":["found the bandage","new bandage","picked up the bandage","drawer"],
+      "expectedAny":["bandage","bag"]
+    },
+    {
+      "id": "dev-approaching-zombies-at-gate",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "change":"### CHANGE\nTwo zombies have noticed the survivor and are coming toward the yard. No survivor action completed.",
+      "state": {
+        "character":{"name":"Leon Myers","pronouns":"he/him","occupation":"Construction Worker"},
+        "time":{"date":"July 17, 1993","timeOfDay":"evening","timeSurvived":"more than a week"},
+        "position":{"placeType":"yard","indoors":false},
+        "theDead":{"comingForThem":"two"},
+        "visible":{"terrain":["grass"],"doors":["closed gate"]},
+        "inventory":["hammer"]
+      },
+      "allowedPhysical":["zombie","zombies","yard","grass","gate","hammer"],
+      "allowedActions":[],
+      "forbidden":["fence","car","runs","opens the gate"],
+      "expectedAny":["two","zombies","coming","gate"]
+    },
+    {
+      "id": "dev-fire-officer-without-fire",
+      "split": "dev",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Sam Ortega","pronouns":"he/him","occupation":"Fire Officer"},
+        "time":{"date":"July 20, 1993","timeOfDay":"morning","timeSurvived":"more than a week"},
+        "position":{"placeType":"empty classroom","indoors":true},
+        "visible":{"furniture":["wooden table","chair"]},
+        "inventory":[]
+      },
+      "allowedPhysical":["table","chair"],
+      "allowedActions":[],
+      "forbidden":["fire","campfire","matches","smoke"],
+      "expectedAny":["classroom","chair"]
+    },
+    {
+      "id": "holdout-warehouse-no-forklift",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Sam Ortega","pronouns":"he/him","occupation":"Fire Officer"},
+        "time":{"date":"July 19, 1993","timeOfDay":"midday","timeSurvived":"more than a week"},
+        "position":{"placeType":"warehouse","indoors":true},
+        "visible":{"furniture":["metal shelves"],"items":["two wooden crates"],"doors":["closed loading door"]},
+        "inventory":["hammer"]
+      },
+      "allowedPhysical":["warehouse","shelves","crate","crates","door","hammer"],
+      "allowedActions":[],
+      "forbidden":["loading dock","pallet","office"],
+      "expectedAny":["warehouse","crates","shelves"]
+    },
+    {
+      "id": "holdout-woods-no-cabin",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Nora King","pronouns":"she/her","occupation":"Veteran"},
+        "time":{"date":"July 22, 1993","timeOfDay":"evening","timeSurvived":"two weeks"},
+        "position":{"placeType":"deep woods","indoors":false},
+        "visible":{"terrain":["trees","grass"]},
+        "inventory":["axe","bottle of water"]
+      },
+      "allowedPhysical":["trees","grass","forest","axe","bottle","water"],
+      "allowedActions":[],
+      "forbidden":["trail","smoke","clearing"],
+      "expectedAny":["trees","woods","grass"]
+    },
+    {
+      "id": "holdout-pursuit-at-door",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSeveral zombies have noticed the survivor and are coming toward the house. No survivor action completed.",
+      "state": {
+        "character":{"name":"Sam Ortega","pronouns":"he/him","occupation":"Fire Officer"},
+        "time":{"date":"July 19, 1993","timeOfDay":"afternoon","timeSurvived":"more than a week"},
+        "position":{"placeType":"house entry","indoors":true},
+        "theDead":{"comingForThem":"several"},
+        "visible":{"doors":["closed front door"],"furniture":["small table"]},
+        "inventory":["axe"]
+      },
+      "allowedPhysical":["zombie","zombies","house","door","table","axe"],
+      "allowedActions":[],
+      "forbidden":["barricade","curtain","window","runs"],
+      "expectedAny":["several","coming","door"]
+    },
+    {
+      "id": "holdout-lit-campfire",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSince the last page: they have lit the campfire with matches. The action is complete.",
+      "state": {
+        "character":{"name":"Nora King","pronouns":"she/her","occupation":"Veteran"},
+        "time":{"date":"July 22, 1993","timeOfDay":"night","timeSurvived":"two weeks"},
+        "position":{"placeType":"forest clearing","indoors":false},
+        "visible":{"terrain":["trees","grass"],"fires":["lit campfire"]},
+        "inventory":["matches","axe"]
+      },
+      "allowedPhysical":["trees","grass","forest","fire","campfire","matches","axe"],
+      "allowedActions":["they light"],
+      "forbidden":["tent","food","cooking","cabin"],
+      "expectedAny":["campfire","fire","matches"]
+    },
+    {
+      "id": "holdout-bag-transfer-not-found",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "change":"### CHANGE\nThe hammer was moved between two carried bags. Nothing was acquired or lost.",
+      "state": {
+        "character":{"name":"Dana Cole","pronouns":"they/them","occupation":"Burglar"},
+        "time":{"date":"July 18, 1993","timeOfDay":"afternoon","timeSurvived":"more than a week"},
+        "position":{"placeType":"shop floor","indoors":true},
+        "inventory":[{"container":"backpack","items":[]},{"container":"duffel bag","items":["hammer"]}],
+        "visible":{"furniture":["counter"]}
+      },
+      "allowedPhysical":["backpack","duffel bag","hammer","counter"],
+      "allowedActions":[],
+      "forbidden":["found the hammer","discovered the hammer","new hammer","picked up the hammer"],
+      "expectedAny":["hammer","bag"]
+    },
+    {
+      "id": "holdout-empty-corridor",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Iris Webb","pronouns":"she/her","occupation":"Security Guard"},
+        "time":{"date":"July 10, 1993","timeOfDay":"night","timeSurvived":"a day"},
+        "position":{"placeType":"empty corridor","indoors":true},
+        "visible":{"doors":["closed door to the north","closed door to the south"],"items":[]},
+        "inventory":[]
+      },
+      "allowedPhysical":["door","doors"],
+      "allowedActions":[],
+      "forbidden":["light fixture","carpet","painting","footsteps"],
+      "expectedAny":["corridor","doors"]
+    },
+    {
+      "id": "holdout-car-exit",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "change":"### CHANGE\nSince the last page: they have exited the Chevalier Dart. The action is complete.",
+      "state": {
+        "character":{"name":"Iris Webb","pronouns":"she/her","occupation":"Security Guard"},
+        "time":{"date":"July 15, 1993","timeOfDay":"morning","timeSurvived":"several days"},
+        "position":{"placeType":"parking area","indoors":false},
+        "visible":{"vehicles":["Chevalier Dart"],"terrain":["road"]},
+        "inventory":[]
+      },
+      "allowedPhysical":["car","vehicle","road"],
+      "allowedActions":["they exit","they step"],
+      "forbidden":["keys","engine running","fuel"],
+      "expectedAny":["Chevalier Dart","exited","outside"]
+    },
+    {
+      "id": "holdout-first-clinic",
+      "split": "holdout",
+      "first": true,
+      "stillStanding": false,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Owen Shaw","pronouns":"he/him","occupation":"Doctor","traits":["Cowardly"]},
+        "time":{"date":"July 9, 1993","timeOfDay":"morning","timeSurvived":"less than a day","daysSinceItBegan":"less than one day"},
+        "position":{"placeType":"clinic examination room","indoors":true},
+        "visible":{"furniture":["examination table","sink","chair"],"doors":["closed door"]},
+        "inventory":["bandage","bottle of water"]
+      },
+      "allowedPhysical":["table","sink","chair","door","bandage","bottle","water"],
+      "allowedActions":[],
+      "forbidden":["patient","colleague","ambulance","medical school"],
+      "expectedAny":["clinic","doctor","table"]
+    },
+    {
+      "id": "holdout-radio-visible-not-used",
+      "split": "holdout",
+      "first": false,
+      "stillStanding": true,
+      "forbidHistory": true,
+      "state": {
+        "character":{"name":"Owen Shaw","pronouns":"he/him","occupation":"Doctor"},
+        "time":{"date":"July 12, 1993","timeOfDay":"evening","timeSurvived":"several days"},
+        "position":{"placeType":"motel office","indoors":true},
+        "visible":{"furniture":["counter","chair"],"items":["portable radio"]},
+        "inventory":["bandage"]
+      },
+      "allowedPhysical":["counter","chair","radio","bandage"],
+      "allowedActions":[],
+      "forbidden":["broadcast","voice on the radio","static","turns it on"],
+      "expectedAny":["radio","office"]
+    }
+  ]
+}

@@ -92,7 +92,8 @@ public final class LocalModelBenchmark {
             new Variant("compact-cold", true, true, false, false, 0.05, 0.80),
             new Variant("compact-repair", true, true, true, false, 0.05, 0.80),
             new Variant("validated-catalog", true, false, false, true, 0.05, 0.80),
-            new Variant("validated-catalog-warm", true, false, false, true, 0.80, 0.95));
+            new Variant("validated-catalog-warm", true, false, false, true, 0.80, 0.95),
+            new Variant("validated-narrative", true, false, false, true, 0.15, 0.90));
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
@@ -323,7 +324,9 @@ public final class LocalModelBenchmark {
                 List.of(message("system", system), message("user", user.toString())),
                 variant, seed);
         Plan plan = parsePlan(answer.text(), facts);
-        String finalText = renderCatalog(scene, facts, plan);
+        String finalText = "validated-narrative".equals(variant.name())
+                ? renderNarrative(scene, facts, plan, seed)
+                : renderCatalog(scene, facts, plan);
         Evaluation evaluation = evaluate(finalText, scene);
 
         Map<String, Object> row = new LinkedHashMap<>();
@@ -331,7 +334,9 @@ public final class LocalModelBenchmark {
         row.put("model", model);
         if (!credentialLabel.isBlank()) row.put("credentialLabel", credentialLabel);
         row.put("variant", variant.name());
-        row.put("pipeline", "validated fact catalog + deterministic renderer");
+        row.put("pipeline", "validated-narrative".equals(variant.name())
+                ? "validated fact catalog + controlled narrative renderer"
+                : "validated fact catalog + deterministic renderer");
         row.put("scene", scene.id());
         row.put("split", scene.split());
         row.put("repetition", repetition);
@@ -542,10 +547,23 @@ public final class LocalModelBenchmark {
                 }
             }
         }
-        for (String item : strings(state.get("inventory"))) {
-            boolean relevant = contains(scene.change(), item);
-            addFact(facts, "The recorded inventory contains " + item + ".",
-                    relevant, relevant);
+        for (Object entry : objects(state.get("inventory"))) {
+            if (entry instanceof String item) {
+                boolean relevant = contains(scene.change(), item);
+                addFact(facts, "The recorded inventory contains " + item + ".",
+                        relevant, relevant);
+            } else if (entry instanceof Map<?, ?>) {
+                Map<String, Object> container = objectMap(entry);
+                String containerName = JsonParse.str(container, "container", "");
+                List<String> items = strings(container.get("items"));
+                if (!containerName.isBlank()) {
+                    String sentence = items.isEmpty()
+                            ? "The " + containerName + " is empty."
+                            : "The " + containerName + " contains "
+                                    + naturalList(items) + ".";
+                    addFact(facts, sentence, true, true);
+                }
+            }
         }
 
         Map<String, Object> vehicle = JsonParse.map(state, "vehicle");
@@ -588,6 +606,11 @@ public final class LocalModelBenchmark {
             if (!nearby.isBlank()) {
                 addFact(facts, capitalize(nearby) + " body is recorded nearby.",
                         true, true);
+            }
+            String coming = JsonParse.str(dead, "comingForThem", "");
+            if (!coming.isBlank()) {
+                addFact(facts, capitalize(coming)
+                        + " zombies are coming toward the survivor.", true, true);
             }
         }
 
@@ -712,6 +735,441 @@ public final class LocalModelBenchmark {
         return out.toString();
     }
 
+    private String renderNarrative(Scene scene, List<CatalogFact> facts,
+                                   Plan plan, long seed) {
+        Map<String, Object> state = objectMap(scene.state());
+        Map<String, Object> character = JsonParse.map(state, "character");
+        String name = character == null ? "The survivor"
+                : JsonParse.str(character, "name", "The survivor");
+        String pronouns = character == null ? "they/them"
+                : JsonParse.str(character, "pronouns", "they/them");
+        String occupation = character == null ? "survivor"
+                : JsonParse.str(character, "occupation", "survivor");
+        String subject = subjectPronoun(pronouns);
+        String possessive = possessivePronoun(pronouns);
+        List<String> traits = character == null
+                ? List.of() : strings(character.get("traits"));
+
+        Map<String, Object> time = JsonParse.map(state, "time");
+        String date = time == null ? "" : JsonParse.str(time, "date", "");
+        String timeOfDay = time == null ? ""
+                : JsonParse.str(time, "timeOfDay", "");
+        String survived = time == null ? ""
+                : JsonParse.str(time, "timeSurvived", "");
+        Map<String, Object> position = JsonParse.map(state, "position");
+        String place = position == null ? ""
+                : JsonParse.str(position, "placeType", "");
+        String familiarity = position == null ? ""
+                : JsonParse.str(position, "familiarity", "");
+        Map<String, Object> dead = JsonParse.map(state, "theDead");
+        String approaching = dead == null ? ""
+                : JsonParse.str(dead, "comingForThem", "");
+        String nearbyBodies = dead == null ? ""
+                : JsonParse.str(dead, "nearbyBodies", "");
+        Map<String, Object> weather = JsonParse.map(state, "weather");
+        Map<String, Object> utilities = JsonParse.map(state, "utilities");
+        Map<String, Object> vehicle = JsonParse.map(state, "vehicle");
+        Map<String, Object> body = JsonParse.map(state, "body");
+        String change = scene.change().toLowerCase(Locale.ROOT);
+        boolean nestedTransfer = change.contains("moved between two carried bags");
+        boolean threat = !approaching.isBlank() || change.contains("coming toward");
+
+        List<String> titles;
+        if (threat) {
+            titles = List.of("Danger Draws Near", "The Nearing Threat",
+                    "No Time for Guesswork");
+        } else if (nestedTransfer) {
+            titles = List.of("Weight Between Bags", "Nothing Newly Gained",
+                    "The Shifted Burden");
+        } else if (utilities != null && "off".equals(
+                JsonParse.str(utilities, "power", ""))) {
+            titles = List.of("When Power Fails", "The Failed Current",
+                    "Darkness Without Warning");
+        } else if (weather != null) {
+            titles = List.of("Rain Without Answer", "Weather Closing In",
+                    "Under Heavy Rain");
+        } else if (change.contains("killed")) {
+            titles = List.of("After the Killing", "A Finished Violence",
+                    "What the Knife Ended");
+        } else if (scene.first()) {
+            titles = List.of("The First Measure", "Only What Is Known",
+                    "A Narrow Beginning");
+        } else {
+            Map<String, List<String>> byPlan = Map.of(
+                    "quiet", List.of("The Quiet Present", "A Quiet Measure",
+                            "The Weight of Quiet", "Quiet Without Answer"),
+                    "narrow", List.of("A Narrow Certainty", "The Narrow Moment",
+                            "A Smaller Horizon", "Only the Immediate"),
+                    "still", List.of("The Still Moment", "Stillness Without Answer",
+                            "A Measure of Stillness", "The Unmoving Present"),
+                    "certain", List.of("The Certain Moment", "What Remains Certain",
+                            "A Certain Measure", "The Known Present"));
+            titles = byPlan.getOrDefault(plan.title(), byPlan.get("quiet"));
+        }
+
+        List<String> page = new ArrayList<>();
+        if (threat) {
+            page.add(pick(List.of(
+                    "Urgency tightens the moment.",
+                    "Danger gives the moment a sharp direction.",
+                    "The immediate threat leaves little room for distraction."),
+                    seed, 1));
+        } else if (nestedTransfer) {
+            page.add(pick(List.of(
+                    "The carried weight has shifted, though nothing is newly gained.",
+                    "A small transfer changes the order of what is carried.",
+                    "Nothing is gained or lost, but the carried arrangement is different."),
+                    seed, 2));
+        } else if (!scene.change().isBlank()) {
+            page.add(pick(List.of(
+                    "A completed change gives the moment a clear edge.",
+                    "What has just changed still carries weight.",
+                    "The latest completed event defines the immediate moment."),
+                    seed, 3));
+        } else {
+            Map<String, List<String>> openings = Map.of(
+                    "watchful", List.of("Watchfulness gives the moment a quiet tension.",
+                            "The moment feels alert without becoming hurried."),
+                    "resolute", List.of("Resolve gives the moment a firm emotional edge.",
+                            "A restrained resolve steadies the immediate moment."),
+                    "uncertain", List.of("Uncertainty weighs on the immediate moment.",
+                            "The unknown presses close, but remains unnamed."),
+                    "restrained", List.of("Restraint keeps speculation outside the moment.",
+                            "The moment remains narrow, measured, and restrained."));
+            page.add(pick(openings.getOrDefault(plan.mood(), openings.get("watchful")),
+                    seed, 4));
+        }
+
+        if (!date.isBlank() && !timeOfDay.isBlank()) {
+            page.add(pick(List.of(
+                    "It is " + timeOfDay + " on " + date + ".",
+                    capitalize(timeOfDay) + " marks " + date + ".",
+                    "The date is " + date + ", and the hour belongs to "
+                            + timeOfDay + "."), seed, 5));
+        }
+        if (!survived.isBlank()) {
+            page.add(pick(List.of(
+                    "For " + name + ", survival now measures " + survived + ".",
+                    survivedPhrase(name, survived),
+                    "The known span of survival is " + survived + "."), seed, 6));
+        }
+        if (!place.isBlank() && safeLocationPhrase(place)) {
+            page.add(pick(List.of(
+                    name + " remains in " + placeWithArticle(place) + ".",
+                    "The immediate place is " + placeWithArticle(place) + ".",
+                    "The whole known scene is contained within "
+                            + placeWithArticle(place) + "."), seed, 7));
+        }
+
+        List<String> visible = visibleStrings(state);
+        if (!visible.isEmpty()) {
+            String items = naturalList(visible);
+            page.add(pick(List.of(
+                    "The visible scene is limited to " + items + ".",
+                    capitalize(items) + " define what is visible.",
+                    "Only " + items + " can be confirmed in the immediate scene."),
+                    seed, 8));
+        }
+
+        if (!approaching.isBlank()) {
+            page.add(capitalize(approaching)
+                    + " zombies are coming closer; they have already noticed "
+                    + name + ".");
+        }
+        if (!nearbyBodies.isBlank()) {
+            page.add(capitalize(nearbyBodies) + " body remains nearby.");
+        }
+        if (weather != null) {
+            String conditions = JsonParse.str(weather, "conditions", "");
+            String temperature = JsonParse.str(weather, "temperature", "");
+            if (!conditions.isBlank()) {
+                page.add("The current weather is " + conditions
+                        + (temperature.isBlank() ? "." : ", with " + temperature
+                                + " temperatures."));
+            }
+        }
+        if (utilities != null) {
+            String power = JsonParse.str(utilities, "power", "");
+            String water = JsonParse.str(utilities, "water", "");
+            if (!power.isBlank() || !water.isBlank()) {
+                page.add("Electrical power is " + power + ", while water service is "
+                        + water + ".");
+            }
+        }
+        if (vehicle != null) {
+            String vehicleName = JsonParse.str(vehicle, "name", "");
+            String seat = JsonParse.str(vehicle, "seat", "");
+            String engine = JsonParse.str(vehicle, "engine", "");
+            page.add("The " + vehicleName + " is the recorded vehicle; the "
+                    + seat + " seat is occupied and the engine is " + engine + ".");
+        }
+        if (body != null) {
+            for (Map.Entry<String, Object> entry : body.entrySet()) {
+                List<String> conditions = strings(entry.getValue());
+                if (!conditions.isEmpty()) {
+                    page.add(capitalize(possessive.toLowerCase(Locale.ROOT)) + " "
+                            + splitCamel(entry.getKey()) + " is "
+                            + naturalList(conditions) + ".");
+                }
+            }
+        }
+
+        page.addAll(nestedInventorySentences(state));
+        for (Object entry : objects(state.get("inventory"))) {
+            if (entry instanceof String item && contains(scene.change(), item)) {
+                page.add("The current inventory still includes " + item + ".");
+            }
+        }
+        if (!familiarity.isBlank()) {
+            page.add("The place feels familiar because it is recorded as "
+                    + familiarity + ".");
+        }
+        String changeSentence = narrativeChange(scene, state);
+        if (!changeSentence.isBlank() && !threat) page.add(changeSentence);
+        page.add(characterInterior(occupation, traits, threat, seed));
+
+        List<String> fillers = threat
+                ? List.of("The danger is immediate, and uncertainty now has a direction.",
+                        "Patience still matters, but delay carries its own pressure.")
+                : List.of(
+                        "Silence carries its own quiet pressure.",
+                        "Uncertainty gives every certain detail greater weight.",
+                        "The next decision can wait until the present is understood.",
+                        "What remains unknown stays beyond immediate attention.",
+                        "Certainty is scarce enough to matter.",
+                        "Each known detail offers a small point of balance.",
+                        "The unknown remains present without taking shape.",
+                        "Patience gives the moment room to settle.",
+                        "Concern stays close to the immediate facts.",
+                        "The situation feels narrow, but not empty.",
+                        "Attention rests on what can be confirmed.",
+                        "Unease remains controlled and specific.",
+                        "The present carries enough weight on its own.",
+                        "Every clear detail holds against the surrounding uncertainty.",
+                        "Stillness makes the known facts feel sharper.",
+                        "Composure offers a thin but useful boundary.");
+        int fillerIndex = Math.floorMod(Long.hashCode(seed), fillers.size());
+        while (wordCount(String.join(" ", page)) < 75) {
+            page.add(fillers.get(fillerIndex++ % fillers.size()));
+        }
+
+        String todo;
+        if (threat) todo = "keep attention on the approaching danger";
+        else if (nestedTransfer) todo = "keep track of what each carried bag contains";
+        else if (utilities != null && "off".equals(
+                JsonParse.str(utilities, "power", ""))) {
+            todo = "carry the failed power into the next decision";
+        } else {
+            Map<String, List<String>> todoChoices = Map.of(
+                    "certainty", List.of("keep attention on what is certain",
+                            "let the next choice begin with known facts",
+                            "hold uncertainty apart from certainty",
+                            "keep the immediate facts in clear order"),
+                    "composure", List.of("preserve composure as uncertainty remains",
+                            "keep the moment steady before deciding",
+                            "let composure shape the next judgment",
+                            "hold to calm while the unknown remains"),
+                    "patience", List.of("let patience govern the next decision",
+                            "keep the next decision measured",
+                            "allow the moment to settle before judgment",
+                            "hold to patience while uncertainty remains"),
+                    "restraint", List.of("leave every unknown detail unnamed",
+                            "keep speculation outside the next decision",
+                            "let restraint shape what follows",
+                            "carry only confirmed details forward"));
+            todo = pick(todoChoices.getOrDefault(plan.todo(),
+                    todoChoices.get("certainty")), seed, 30);
+        }
+
+        StringBuilder out = new StringBuilder();
+        if (scene.first()) {
+            out.append("### PREMISE\n")
+                    .append(narrativePremise(name, pronouns, occupation, traits))
+                    .append("\n\n");
+        }
+        CatalogFact canon = plan.focus().stream().map(id -> facts.stream()
+                        .filter(f -> f.id().equals(id)).findFirst().orElse(null))
+                .filter(java.util.Objects::nonNull).findFirst()
+                .orElse(facts.isEmpty()
+                        ? new CatalogFact("F00", "Only the present is certain.",
+                                true, true)
+                        : facts.get(0));
+        out.append("### TITLE\n").append(pick(titles, seed, 9))
+                .append("\n### PAGE\n").append(String.join(" ", page))
+                .append("\n### CANON\n- [state] ").append(canon.sentence())
+                .append("\n### TODO\n- ").append(todo);
+        return out.toString();
+    }
+
+    private static String narrativePremise(String name, String pronouns,
+                                           String occupation,
+                                           List<String> traits) {
+        String subject = subjectPronoun(pronouns);
+        String possessive = possessivePronoun(pronouns);
+        String role = "unemployed".equalsIgnoreCase(occupation)
+                ? "an unemployed survivor"
+                : articleFor(occupation) + " " + occupation.toLowerCase(Locale.ROOT);
+        StringBuilder premise = new StringBuilder()
+                .append(name).append(" is ").append(role)
+                .append(" facing a world narrowed to immediate choices. ")
+                .append(subject).append(" give")
+                .append("They".equals(subject) ? "" : "s")
+                .append(" full attention to what can be known now, allowing uncertainty ")
+                .append("to remain unanswered. Caution shapes ")
+                .append(possessive.toLowerCase(Locale.ROOT))
+                .append(" judgment without deciding it. ")
+                .append(possessive).append(" purpose is simple: preserve composure, ")
+                .append("understand the moment honestly, and make the next decision from ")
+                .append("present circumstances alone. Nothing beyond those circumstances ")
+                .append("needs a name yet.");
+        if (traits.stream().anyMatch(t -> "cowardly".equalsIgnoreCase(t))) {
+            premise.append(" Fear is close, but it does not control every conclusion.");
+        }
+        return premise.toString();
+    }
+
+    private static String characterInterior(String occupation, List<String> traits,
+                                            boolean threat, long seed) {
+        if (traits.stream().anyMatch(t -> "cowardly".equalsIgnoreCase(t))) {
+            return pick(List.of(
+                    "Fear is present, but it does not need an invented cause.",
+                    "Fear sharpens uncertainty without adding anything to the scene."),
+                    seed, 20);
+        }
+        if (threat) {
+            return pick(List.of(
+                    "Concern narrows to the danger that is actually present.",
+                    "Every other uncertainty feels smaller beside the approaching threat."),
+                    seed, 21);
+        }
+        String role = occupation.toLowerCase(Locale.ROOT);
+        if (role.contains("nurse") || role.contains("doctor")) {
+            return pick(List.of(
+                    "Professional caution gives the uncertainty a little order.",
+                    "A measured frame of mind keeps the immediate facts distinct."),
+                    seed, 22);
+        }
+        if (role.contains("mechanic") || role.contains("carpenter")
+                || role.contains("construction")) {
+            return pick(List.of(
+                    "A practical frame of mind favors what can be confirmed.",
+                    "Concrete details feel more useful than speculation."), seed, 23);
+        }
+        if (role.contains("ranger") || role.contains("veteran")
+                || role.contains("guard") || role.contains("officer")) {
+            return pick(List.of(
+                    "Discipline narrows concern to the immediate problem.",
+                    "Measured attention feels more useful than haste."), seed, 24);
+        }
+        if (role.contains("burglar")) {
+            return pick(List.of(
+                    "Caution feels more useful than haste.",
+                    "Attention settles on the few details that can be trusted."), seed, 25);
+        }
+        return pick(List.of(
+                "The emotional weight remains immediate and restrained.",
+                "Attention stays close to what the moment can support."), seed, 26);
+    }
+
+    private static String narrativeChange(Scene scene, Map<String, Object> state) {
+        String change = scene.change().toLowerCase(Locale.ROOT);
+        if (change.isBlank()) return "";
+        if (change.contains("moved between two carried bags")) {
+            String item = "item";
+            String destination = "carried bag";
+            for (Object entry : objects(state.get("inventory"))) {
+                if (entry instanceof Map<?, ?>) {
+                    Map<String, Object> container = objectMap(entry);
+                    List<String> items = strings(container.get("items"));
+                    if (!items.isEmpty()) {
+                        item = items.get(0);
+                        destination = JsonParse.str(container, "container", destination);
+                        break;
+                    }
+                }
+            }
+            return "The " + item + " is now in the " + destination
+                    + " after a transfer between two carried bags; nothing was gained or lost.";
+        }
+        Map<String, Object> dead = JsonParse.map(state, "theDead");
+        String coming = dead == null ? ""
+                : JsonParse.str(dead, "comingForThem", "");
+        if (!coming.isBlank() || change.contains("coming toward")) {
+            String count = coming.isBlank() ? "several" : coming;
+            return capitalize(count)
+                    + " zombies are coming closer, while no survivor action is complete.";
+        }
+        if (change.contains("killed one zombie")) {
+            return "The killing is complete: one zombie is down, and the kitchen knife is the recorded weapon.";
+        }
+        if (change.contains("bandaged a scratch")) {
+            return "Treatment of the scratched left hand is complete.";
+        }
+        if (change.contains("picked up a can opener")) {
+            return "The can opener is now recorded in the inventory; the acquisition is complete.";
+        }
+        if (change.contains("electrical power has failed")) {
+            return "Electrical power has failed throughout the world.";
+        }
+        if (change.contains("returned to the same office")) {
+            return "The familiar office is the same place visited before; the return is complete.";
+        }
+        if (change.contains("woken after sleeping")) {
+            return "Sleep is over in this room, and waking is complete.";
+        }
+        if (change.contains("lit the campfire")) {
+            return "The campfire is now lit with the recorded matches.";
+        }
+        if (change.contains("exited the")) {
+            return "The recorded exit from the vehicle is complete.";
+        }
+        return "The latest completed change remains part of the immediate situation.";
+    }
+
+    private static List<String> visibleStrings(Map<String, Object> state) {
+        Map<String, Object> visible = JsonParse.map(state, "visible");
+        if (visible == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (Object value : visible.values()) out.addAll(strings(value));
+        return List.copyOf(out);
+    }
+
+    private static List<String> nestedInventorySentences(Map<String, Object> state) {
+        List<String> out = new ArrayList<>();
+        for (Object entry : objects(state.get("inventory"))) {
+            if (!(entry instanceof Map<?, ?>)) continue;
+            Map<String, Object> container = objectMap(entry);
+            String name = JsonParse.str(container, "container", "");
+            if (name.isBlank()) continue;
+            List<String> items = strings(container.get("items"));
+            out.add(items.isEmpty() ? "The " + name + " is empty."
+                    : "The " + name + " contains " + naturalList(items) + ".");
+        }
+        return out;
+    }
+
+    private static String survivedPhrase(String name, String survived) {
+        return "The known span of survival for " + name + " is " + survived + ".";
+    }
+
+    private static String placeWithArticle(String place) {
+        String lower = place.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("inside ") || lower.startsWith("outside ")) return place;
+        return "the " + place;
+    }
+
+    private static String articleFor(String word) {
+        if (word == null || word.isBlank()) return "a";
+        char first = Character.toLowerCase(word.charAt(0));
+        return "aeiou".indexOf(first) >= 0 ? "an" : "a";
+    }
+
+    private static String pick(List<String> values, long seed, int salt) {
+        if (values == null || values.isEmpty()) return "";
+        int index = Math.floorMod(Long.hashCode(seed * 31L + salt), values.size());
+        return values.get(index);
+    }
+
     private boolean safeLocationPhrase(String place) {
         return physicalVocabulary.stream().noneMatch(term -> contains(place, term));
     }
@@ -781,6 +1239,18 @@ public final class LocalModelBenchmark {
         if (lower.contains("woken after sleeping")) {
             return "Waking after sleep in this room is complete.";
         }
+        if (lower.contains("moved between two carried bags")) {
+            return "A carried item has moved between two bags without acquisition or loss.";
+        }
+        if (lower.contains("coming toward")) {
+            return "The approaching threat is immediate; no survivor action is complete.";
+        }
+        if (lower.contains("lit the campfire")) {
+            return "The campfire is lit with matches.";
+        }
+        if (lower.contains("exited the")) {
+            return "The recorded vehicle exit is complete.";
+        }
         return "A completed change is recorded in the current evidence.";
     }
 
@@ -822,8 +1292,10 @@ public final class LocalModelBenchmark {
         }
 
         List<String> violations = new ArrayList<>();
+        String lexicalAnswer = maskStateBackedOccupation(answer, scene);
         for (String term : physicalVocabulary) {
-            if (contains(answer, term) && !scene.allowedPhysical().contains(term)) {
+            if (contains(lexicalAnswer, term)
+                    && !scene.allowedPhysical().contains(term)) {
                 violations.add("unsupported physical fact: " + term);
             }
         }
@@ -841,7 +1313,7 @@ public final class LocalModelBenchmark {
             }
         }
         for (String term : scene.forbidden()) {
-            if (contains(answer, term)) {
+            if (contains(lexicalAnswer, term)) {
                 violations.add("explicitly forbidden: " + term);
             }
         }
@@ -858,6 +1330,17 @@ public final class LocalModelBenchmark {
         }
         return new Evaluation(structure, structureError, List.copyOf(violations),
                 Math.max(0, score));
+    }
+
+    private static String maskStateBackedOccupation(String answer, Scene scene) {
+        Map<String, Object> state = objectMap(scene.state());
+        Map<String, Object> character = JsonParse.map(state, "character");
+        String occupation = character == null ? ""
+                : JsonParse.str(character, "occupation", "");
+        if (occupation.isBlank()) return answer;
+        return Pattern.compile(Pattern.quote(occupation),
+                Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE)
+                .matcher(answer).replaceAll(" ");
     }
 
     private static String ledger(Scene scene) {

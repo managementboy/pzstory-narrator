@@ -5,10 +5,12 @@ It does not read a save or installed mod. Local OpenAI-compatible servers are
 the default; the harness can also call Gemini with a key supplied only through
 an environment variable.
 
-`scenes.json` contains development and held-out scenes with explicit grounding
-rules. `LocalModelBenchmark.java` uses the production `Prompt` builder and
-`PageResult` validator and appends one JSON record after every generation.
-Interrupted runs therefore remain useful.
+`scenes.json` is the original frozen corpus used for the completed validated
+holdout. `scenes-v2.json` preserves that holdout and adds later development-only
+fixtures. Use the corpus named by the report being reproduced; do not rerun or
+retune against the frozen holdout. `LocalModelBenchmark.java` uses the
+production `Prompt` builder and `PageResult` validator and appends one JSON
+record after every generation. Interrupted runs therefore remain useful.
 
 Each result records the model digest, prompt variant, seed, timing, complete
 reply, structural parse result and deterministic grounding violations. The
@@ -67,10 +69,12 @@ Remove-Item Env:PZSTORY_BENCHMARK_API_KEY
 
 Available variants are `baseline`, `ledger`, `ledger-cold`,
 `compact-ledger`, `compact-cold`, `compact-repair`, `validated-catalog` and
-`validated-catalog-warm`. The validated variants ask the model for a JSON plan
-containing only supplied fact IDs and controlled enums, validate that plan, and
-render final text from state-backed slots. The warm form stress-tests fallback
-behavior; it is not the selected production candidate.
+`validated-catalog-warm`, plus `validated-narrative`. The validated variants
+ask the model for a JSON plan containing only supplied fact IDs and controlled
+enums, validate that plan, and render final text from state-backed slots. The
+warm catalog form stress-tests fallback behavior. `validated-narrative` keeps
+the same boundary while using typed facts and larger controlled phrase banks to
+produce more natural prose.
 
 Use `--split holdout` only after selecting a strategy on the development split.
 `--scene` accepts a comma-separated list of exact scene ids for a short
