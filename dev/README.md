@@ -5,8 +5,8 @@ working on the mod.
 
 ## `PZStory_Probe.lua`
 
-When Project Zomboid is launched with `-debug`, **F4** opens the guided
-PZStory Test Lab and **F3** runs the selected suite. The visible buttons run
+When Project Zomboid is launched with `-debug`, the guided PZStory Test Lab
+opens automatically. Its visible buttons run
 Quick Checks; isolated place, door, vehicle, noise, kill, time and continuity
 scenarios; or the real Event and Kill walkthroughs. Automated scenarios use
 in-memory fixtures and never change the save or contact a provider. Quick
@@ -17,18 +17,16 @@ axe and spawns two nearby zombies; the player still performs both real kills.
 
 The lab refuses to prepare fixtures outside game debug mode. Use a copied or
 disposable save: spawned items and zombies are normal save-world objects.
-For unattended harnesses whose synthetic function keys are not accepted by
-the game, the debug Lua console exposes `PZStoryTestLabToggle()` and
-`PZStoryTestLabRun()` with the same debug-mode safeguards.
+For unattended harnesses, the debug Lua console exposes
+`PZStoryTestLabToggle()` and `PZStoryTestLabRun()` with the same debug-mode
+safeguards.
 The read-only Quick Checks also run automatically after a save loads in game
 debug mode, so an unattended smoke test needs no synthetic key input.
 
-Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get six keys:
+Drop it beside `PZStoryBook.lua` in the mod's Lua folder to get five diagnostic
+keys. The game's F3, F4 and F5 speed controls remain untouched:
 
 - **F8** — toggle the local Testing Mode overlay and pending Event Inbox.
-- **F5** — cycle pending events, recent history, structured facts, deliberate
-  threads and local continuity evidence.
-
 - **F9** — dump the minimised, provider-facing live-state block to
   `console.txt`. This is the fastest way to answer "what did the narrator
   actually see?" without logging exact coordinates, account names or raw

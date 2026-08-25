@@ -2,13 +2,13 @@
   PZStory - Phase 2 harness.
 
   F8  - toggle the local Testing Mode overlay
-  F5  - cycle Pending, History, Facts, Threads and Continuity Evidence
+  The game's F3, F4 and F5 speed controls are deliberately left untouched.
   F9  - dump the provider-facing live-state projection to console
   F10 - fire a tiny model request and stream the reply into console
   F11 - dump the local event journal (contains local ids)
   F6  - dump structured place memory (contains local ids)
-  F4  - open the debug-only guided Test Lab
-  F3  - run/advance the selected Test Lab suite
+  The debug-only guided Test Lab opens automatically and is controlled by its
+  visible buttons.
 
   There is still no UI. The point of this file is to prove the whole chain
   end to end - key, network, SSE parsing, background thread, per-frame drain -
@@ -22,13 +22,10 @@ require "ISUI/ISButton"
 
 local TAG = "[PZStoryProbe] "
 local OVERLAY_BIND  = "PZStory: testing mode overlay"
-local INBOX_BIND    = "PZStory: testing mode inbox view"
 local SNAPSHOT_BIND = "PZStory: provider state to log"
 local TEST_BIND     = "PZStory: model self-test"
 local EVENTS_BIND   = "PZStory: local event journal to log"
 local MEMORY_BIND   = "PZStory: local world memory to log"
-local LAB_BIND      = "PZStory: open guided test lab"
-local LAB_RUN_BIND  = "PZStory: run guided test step"
 
 local function say(...)
     local parts = {}
@@ -48,13 +45,10 @@ local function notify(text, good)
 end
 
 table.insert(keyBinding, { value = OVERLAY_BIND,  key = Keyboard.KEY_F8 })
-table.insert(keyBinding, { value = INBOX_BIND,    key = Keyboard.KEY_F5 })
 table.insert(keyBinding, { value = SNAPSHOT_BIND, key = Keyboard.KEY_F9 })
 table.insert(keyBinding, { value = TEST_BIND,     key = Keyboard.KEY_F10 })
 table.insert(keyBinding, { value = EVENTS_BIND,   key = Keyboard.KEY_F11 })
 table.insert(keyBinding, { value = MEMORY_BIND,   key = Keyboard.KEY_F6 })
-table.insert(keyBinding, { value = LAB_BIND,      key = Keyboard.KEY_F4 })
-table.insert(keyBinding, { value = LAB_RUN_BIND,  key = Keyboard.KEY_F3 })
 
 -- ---------------------------------------------------------------- snapshot
 
@@ -456,7 +450,7 @@ local function drawOverlay()
         end
     end
     y = y + 4
-    shadowText(UIFont.Small, x, y, "F5: inbox/history/facts/threads/evidence  |  F8: close",
+    shadowText(UIFont.Small, x, y, "Inbox view: PZStoryProbeSwitchInbox()  |  F8: close",
         0.65, 0.75, 0.8, false)
 end
 
@@ -490,7 +484,7 @@ local lab = {
     suite = 1,
     step = 0,
     title = "READY",
-    instruction = "F3: run quick checks  |  F4: close",
+    instruction = "Use the buttons above; CLOSE hides the lab.",
     results = {},
     baseline = {},
     deadline = 0,
@@ -592,7 +586,7 @@ local function runQuickChecks()
     labResult("provider preview", ok and preview ~= "", #preview .. " chars")
     labResult("exact coordinates withheld", ok and not coordinateLeak)
     lab.title = "QUICK CHECKS COMPLETE"
-    lab.instruction = "Review PASS/FAIL below. F3 repeats; F4 closes."
+    lab.instruction = "Review PASS/FAIL below; use the buttons to repeat or close."
 end
 
 local function runSyntheticScenario(scenario)
@@ -646,7 +640,7 @@ local function checkWalkthrough()
         labResult("step timed out", false, lab.instruction)
         lab.running = false
         lab.title = "WALKTHROUGH PAUSED"
-        lab.instruction = "F3 restarts the suite."
+        lab.instruction = "Use the buttons above to restart or choose another suite."
         return
     end
     if lab.step == 1 and sawAfter("door_opened") then
@@ -712,13 +706,13 @@ local function toggleLab()
         lab.results = {}
         labResult("game debug mode", false, "restart Project Zomboid with -debug")
         lab.title = "DEBUG MODE REQUIRED"
-        lab.instruction = "F4 closes. No save data was changed."
+        lab.instruction = "CLOSE hides the lab. No save data was changed."
         return
     end
     if not lab.visible then
         lab.visible = true
         lab.title = suites[lab.suite]
-        lab.instruction = "F3: run  |  F4: next suite/close after third"
+        lab.instruction = "Use the buttons above to run another suite or close."
     elseif not lab.running then
         if lab.suite == #suites then
             lab.visible = false
@@ -727,7 +721,7 @@ local function toggleLab()
         end
         lab.suite = lab.suite + 1
         lab.title = suites[lab.suite]
-        lab.instruction = "F3: run this suite  |  F4: next suite"
+        lab.instruction = "Use the buttons above to run this or another suite."
         lab.results = {}
     else
         lab.running = false
@@ -808,6 +802,7 @@ end
 PZStoryTestLabToggle = toggleLab
 PZStoryTestLabRun = runLabSuite
 PZStoryTestLabScenario = runSyntheticScenario
+PZStoryProbeSwitchInbox = switchInbox
 
 -- ------------------------------------------------------------------ wiring
 
@@ -831,19 +826,7 @@ Events.OnGameStart.Add(function()
 end)
 
 Events.OnKeyPressed.Add(function(key)
-    -- Existing keysB42.ini files do not gain a persisted value merely because
-    -- a mod registers a new binding. Honour an assigned value, but keep the
-    -- documented physical defaults usable on upgraded profiles.
-    local labKey = getCore():getKey(LAB_BIND)
-    local labRunKey = getCore():getKey(LAB_RUN_BIND)
-    if key == Keyboard.KEY_F4 or (labKey ~= nil and labKey > 0 and key == labKey) then
-        toggleLab()
-    end
-    if key == Keyboard.KEY_F3 or (labRunKey ~= nil and labRunKey > 0 and key == labRunKey) then
-        runLabSuite()
-    end
     if key == getCore():getKey(OVERLAY_BIND) then toggleOverlay() end
-    if key == getCore():getKey(INBOX_BIND) then switchInbox() end
     if key == getCore():getKey(SNAPSHOT_BIND) then takeSnapshot("keypress") end
     if key == getCore():getKey(TEST_BIND) then runSelfTest() end
     if key == getCore():getKey(EVENTS_BIND) then

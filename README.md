@@ -201,13 +201,14 @@ tools/        test.sh (unit tests) and verify.sh (release integrity)
 build.sh      javac + jar, then verify
 ```
 
-`dev/PZStory_Probe.lua` adds F4/F3 (debug-only guided Test Lab), F8/F5
+`dev/PZStory_Probe.lua` adds an on-screen debug-only guided Test Lab, F8
 (Testing Mode and Event Inbox), F9
 (provider-facing live-state projection), F10
 (Java bridge self-test), F11 (local event journal) and F6 (local world memory).
 Drop it in beside `PZStoryBook.lua` if you are working on the mod; leave it out
 if you are playing. F11/F6 contain local stable ids and should be treated as
-private diagnostics.
+private diagnostics. It deliberately leaves the game's F3, F4 and F5 speed
+controls untouched.
 
 ## Tests
 

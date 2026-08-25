@@ -65,17 +65,15 @@ Optionally copy `dev/PZStory_Probe.lua` beside the production Lua file:
 - F8: toggle Testing Mode. It labels the current place in the world with its
   visit count and shows up to six pending detected events with their factual
   summaries and significance.
-- F5: switch the visible Event Inbox between pending events and recent history.
-  Continue pressing for Story Facts, Story Threads and Continuity Evidence.
-  Narrated events are labelled with the page that consumed them; facts show
-  type, provenance, confidence and active/superseded status. Continuity keeps
-  exact counts local while narrator prompts receive only qualitative evidence.
+- The game's F3, F4 and F5 speed controls remain untouched. The debug Lua
+  console can call `PZStoryProbeSwitchInbox()` to cycle the Event Inbox when
+  that diagnostic view is needed.
 - F9: provider-facing state, with privacy minimisation.
 - F10: provider connectivity test.
 - F11: local event journal.
 - F6: local world memory (moved from F12 to avoid common screenshot overlays).
-- F4: open/cycle the debug-only guided Test Lab.
-- F3: run or restart the selected Test Lab suite.
+- The guided Test Lab opens automatically in debug mode and is controlled by
+  its visible buttons.
 
 F11 and F6 intentionally contain local stable ids and must not appear in the
 provider payload or generated page. They are debugging data; review them before
