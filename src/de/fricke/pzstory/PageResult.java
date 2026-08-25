@@ -22,6 +22,8 @@ public final class PageResult {
     private static final int MAX_CANON_ENTRIES = 12;
     private static final int MAX_CANON_CHARS = 300;
     private static final int MAX_TODO_CHARS = 160;
+    private static final String CANON_KIND = "\\[(state|world|biography|person|possession|"
+            + "injury|knowledge|belief|promise|thread)\\] .+";
 
     public final String premise;
     public final String title;
@@ -131,14 +133,23 @@ public final class PageResult {
             throw invalid("the page exceeded " + MAX_PAGE_CHARS + " characters");
         }
         int pageWords = words(page);
-        int maximumWords = Math.max(600, Math.max(100, targetWords) * 3);
-        if (pageWords < 40 || pageWords > maximumWords) {
-            throw invalid("the page was " + pageWords + " words; safe range is 40-"
-                    + maximumWords + " words for this setting");
+        if (pageWords < 40) {
+            throw invalid("the page was " + pageWords
+                    + " words; expected at least 40 words for a complete moment");
         }
 
         List<String> canon = bulletLines(canonText, "CANON", MAX_CANON_ENTRIES,
                 MAX_CANON_CHARS);
+        for (String entry : canon) {
+            if (!entry.matches(CANON_KIND)) {
+                throw invalid("CANON entries require one allowed [kind]");
+            }
+            String lower = entry.toLowerCase(java.util.Locale.ROOT);
+            if (lower.startsWith("[person] the survivor ")
+                    || lower.matches("\\[person] .+ (feels|felt|fears|dreads) .+")) {
+                throw invalid("[person] is for another person, not the survivor's mood");
+            }
+        }
         String todo = singleBullet(todoText, "TODO", MAX_TODO_CHARS);
         return new PageResult(premise, title, page, canon, todo);
     }

@@ -1160,19 +1160,7 @@ public final class StateReader {
 
     private static void add(StringBuilder sb, String label, Object opt) {
         if (opt == null) return;
-        String s = null;
-        // Enum options carry a human label; integer and double ones do not, so
-        // fall back to the raw value rather than dropping the line entirely.
-        for (String getter : new String[]{"getValueTranslation", "getValue"}) {
-            try {
-                Object v = opt.getClass().getMethod(getter).invoke(opt);
-                if (v == null) continue;
-                String t = String.valueOf(v).trim();
-                if (!t.isEmpty()) { s = t; break; }
-            } catch (Throwable ignored) {
-                // A renamed option costs one line, never the block.
-            }
-        }
+        String s = SandboxOption.selectedValue(opt);
         if (s == null) return;
         sb.append("- ").append(label).append(": ").append(s).append('\n');
     }

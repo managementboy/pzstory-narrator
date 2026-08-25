@@ -139,14 +139,81 @@ public final class BridgeContractTest {
                         && llm.contains("result == null && req.bufferedOutput")
                         && api.contains("ValidatedNarrator.prepare(")
                         && api.contains("CompletionResult.success(rendered)"));
-        T.ok("experimental narrator is an explicit setup choice",
+        T.ok("temporary live trace covers safe planner and controlled page",
+                api.contains("LiveTrace.request(session.systemPrompt()")
+                        && api.contains("LiveTrace.reply(plannerReply)")
+                        && api.contains("CONTROLLED RENDERED PAGE"));
+        T.ok("narrator modes use isolated LM Studio checkpoints",
+                llm.contains("SCOPE_CLASSIC")
+                        && llm.contains("SCOPE_SAFE")
+                        && api.contains("startBufferedScoped(")
+                        && api.contains("startScoped("));
+        String history = read("src/de/fricke/pzstory/NarratorHistory.java");
+        T.ok("story selection starts a hidden pre-page history seed",
+                api.contains("NarratorHistory.ensureSeeded(")
+                        && api.contains("historySeedStatus()")
+                        && lua.contains("Knox history")
+                        && history.contains("HISTORY_READY_V2"));
+        T.ok("KnoxOS reports real boot telemetry without draining the stream",
+                api.contains("knoxOsStatus()")
+                        && llm.contains("statusJson(false)")
+                        && lua.contains("renderKnoxOS")
+                        && lua.contains("inputTokens")
+                        && lua.contains("No input required")
+                        && !lua.contains("BEGINNING"));
+        T.ok("KnoxOS can correct provider and model before generation",
+                lua.contains("or { \"SETUP\" }")
+                        && lua.contains("if self.mode == \"setup\" then return end"));
+        T.ok("stateless providers do not deadlock on history not needed",
+                lua.contains("state == \"ready\" or state == \"not_needed\""));
+        T.ok("failed history seed waits for an explicit KnoxOS retry",
+                api.contains("retryHistorySeed()")
+                        && history.contains("failedKey.equals(key)")
+                        && history.contains("Llm.failedInScope(safeScope)")
+                        && lua.contains("api(\"retryHistorySeed\")")
+                        && lua.contains("choose RETRY or SETUP"));
+        T.ok("SETUP selects every downloaded LM Studio LLM",
+                api.contains("lmStudioModels()")
+                        && api.contains("nextLmStudioModel()")
+                        && lua.contains("local model")
+                        && lua.contains("nextLmStudioModel")
+                        && read("src/de/fricke/pzstory/LmStudioCatalog.java")
+                                .contains("/api/v1/models"));
+        T.ok("history seed is provider state, never a story page",
+                read("src/de/fricke/pzstory/Campaign.java")
+                        .contains("commitProviderSeed(")
+                        && !method(history, "public static SeedStatus ensureSeeded")
+                                .contains("commitGeneratedPage"));
+        T.ok("first visible request waits for the hidden seed",
+                method(api, "public static String requestStoryPage")
+                        .contains("SeedStatus.SEEDING"));
+        T.ok("fresh game opens, pauses and begins page one automatically",
+                lua.contains("autoOpenPending = true")
+                        && lua.contains("instance:open(true)")
+                        && lua.contains("advanceAutomaticOpening()")
+                        && lua.contains("self:writePage(\"\")"));
+        T.ok("conversation workflow uses grounded Qwen planning",
+                lua.contains("narrator(\"validated\")")
+                        && !lua.contains("narrator(\"classic\")")
+                        && api.contains("Campaign.repetitionGuidance(), Campaign.pageCount() + 1"));
+        T.ok("later pages require a one-shot player note",
+                api.contains("Tell the narrator what matters before continuing.")
+                        && lua.contains("YOUR NOTE - required for the next page")
+                        && lua.contains("tell the narrator what matters next")
+                        && lua.contains("self.pendingPlayerNote")
+                        && lua.contains("self.entry:setText(\"\")"));
+        T.ok("classic mode has one corrective turn",
+                api.contains("CompletionResult.retry(")
+                        && llm.contains("req.repairCount == 0")
+                        && lua.contains("CORRECTING PAGE")
+                        && lua.contains("data.repairing == true"));
+        T.ok("experimental narrator architecture remains behind the bridge",
                 api.contains("setNarratorMode(String mode)")
-                        && lua.contains("safe (experimental)")
                         && lua.contains("data.buffered == true"));
-        T.ok("unsupported safe-mode inputs are preserved, not consumed",
+        T.ok("safe-mode notes cross the controlled planner boundary",
                 api.contains("safe experimental narrator currently supports chronicler")
-                        && api.contains("capturedNotes.directionCount > 0")
-                        && api.contains("cannot consume notebook directions yet"));
+                        && api.contains("Campaign.PromptNotes capturedNotes")
+                        && !api.contains("cannot consume notebook directions yet"));
 
         T.group("Testing Mode - local diagnostics overlay");
         T.ok("F8 toggles Testing Mode",
@@ -170,9 +237,8 @@ public final class BridgeContractTest {
                         && probe.contains("REVEALED \"")
                         && !method(api, "public static String directorStatus()")
                                 .contains("fixedSpine"));
-        T.ok("F5 cycles inbox, narrated history and story facts",
-                probe.contains("Keyboard.KEY_F5")
-                        && probe.contains("switchInbox()")
+        T.ok("console control cycles inbox, narrated history and story facts",
+                probe.contains("PZStoryProbeSwitchInbox = switchInbox")
                         && probe.contains("RECENT HISTORY")
                         && probe.contains("PAGE \" .. event.narrated")
                         && probe.contains("STORY FACTS")
@@ -183,15 +249,13 @@ public final class BridgeContractTest {
                         && probe.contains("if #summary > 88 then"));
 
         T.group("Testing Mode - guided Test Lab");
-        T.ok("Test Lab has configurable keys",
-                probe.contains("Keyboard.KEY_F4")
-                        && probe.contains("Keyboard.KEY_F3")
-                        && probe.contains("runLabSuite()"));
-        T.ok("upgraded key profiles retain physical defaults",
-                probe.contains("key == Keyboard.KEY_F4")
-                        && probe.contains("key == Keyboard.KEY_F3")
-                        && probe.contains("labKey > 0")
-                        && probe.contains("labRunKey > 0"));
+        T.ok("Test Lab has visible buttons and console controls",
+                probe.contains("ensureLabPanel()")
+                        && probe.contains("PZStoryTestLabToggle = toggleLab")
+                        && probe.contains("PZStoryTestLabRun = runLabSuite"));
+        T.ok("Test Lab does not steal physical function keys",
+                !probe.contains("key == Keyboard.KEY_F4")
+                        && !probe.contains("key == Keyboard.KEY_F3"));
         T.ok("unattended harness has debug-console entry points",
                 probe.contains("PZStoryTestLabToggle = toggleLab")
                         && probe.contains("PZStoryTestLabRun = runLabSuite"));

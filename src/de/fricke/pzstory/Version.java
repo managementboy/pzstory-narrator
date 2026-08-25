@@ -33,7 +33,7 @@ public final class Version {
      * Human-facing release. Bump for any shipped change.
      * MUST equal modversion in mod/42/mod.info.
      */
-    public static final String RELEASE = "2.0.0-alpha.9";
+    public static final String RELEASE = "2.0.0-alpha.13";
 
     /**
      * Lua/Java bridge compatibility. Bump when production Lua depends on a
@@ -59,6 +59,14 @@ public final class Version {
      *      diagnostics and automated scenarios
      *   12 release 2.0.0-alpha.9 - experimental validated narrator and
      *      buffered planner output
+     *      release 2.0.0-alpha.10 - transactional LM Studio stateful sessions;
+     *      release 2.0.0-alpha.11 - narrator-scoped sessions and one repair turn;
+     *      release 2.0.0-alpha.12 - recorded-pronoun Safe prose and paragraphs;
+     *   13 release 2.0.0-alpha.13 - atmospheric grounded openings, Safe trace,
+     *      and pre-page narrator-history bootstrap status
+     *   14 KnoxOS read-only boot telemetry
+     *   15 dynamic downloaded-model selection from LM Studio
+     *   16 explicit KnoxOS history retry; failed seeds no longer auto-resend
      */
-    public static final String API = "12";
+    public static final String API = "16";
 }

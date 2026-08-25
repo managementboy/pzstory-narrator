@@ -31,6 +31,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class Llm {
 
+    /** Bump a scope when its conversation contract changes incompatibly. */
+    public static final String SCOPE_CLASSIC = "classic-prose-v1";
+    public static final String SCOPE_SAFE = "safe-planner-v1";
+    private static final String SCOPE_ADHOC = "adhoc-v1";
+
     /** Provider-controlled input limits. These are hard safety ceilings. */
     private static final int MAX_ERROR_BYTES  = 64 * 1024;
     private static final int MAX_SSE_BYTES    = 2 * 1024 * 1024;
@@ -52,11 +57,19 @@ public final class Llm {
         public final String kind;
         public final String message;
         public final String replacement;
+        public final String retrySystem;
+        public final String retryCached;
+        public final String retryTail;
 
-        private CompletionResult(String kind, String message, String replacement) {
+        private CompletionResult(String kind, String message, String replacement,
+                                 String retrySystem, String retryCached,
+                                 String retryTail) {
             this.kind = kind;
             this.message = message;
             this.replacement = replacement;
+            this.retrySystem = retrySystem;
+            this.retryCached = retryCached;
+            this.retryTail = retryTail;
         }
 
         public static CompletionResult failure(String kind, String message) {
@@ -64,7 +77,7 @@ public final class Llm {
                     kind == null || kind.isBlank() ? "postprocess" : kind,
                     message == null || message.isBlank()
                             ? "the completed page could not be kept" : message,
-                    null);
+                    null, null, null, null);
         }
 
         /** Replaces hidden planner output with validated player-facing text. */
@@ -73,7 +86,18 @@ public final class Llm {
                 return failure("postprocess",
                         "the completed page renderer returned nothing");
             }
-            return new CompletionResult(null, null, replacement);
+            return new CompletionResult(null, null, replacement, null, null, null);
+        }
+
+        /** Requests one corrective provider turn before the response is rejected. */
+        public static CompletionResult retry(String system, String cached, String tail) {
+            if (tail == null || tail.isBlank()) {
+                return failure("postprocess", "the repair request was empty");
+            }
+            return new CompletionResult(null, null, null,
+                    system == null ? "" : system,
+                    cached == null ? "" : cached,
+                    tail);
         }
     }
 
@@ -122,15 +146,27 @@ public final class Llm {
         final long generation;
         /** Live response body, so cancel() can shut it and free the worker. */
         volatile java.io.Closeable body;
-        /** Guards run-at-most-once for the success callback. */
-        final AtomicBoolean callbackRan = new AtomicBoolean(false);
         /** Planner bytes stay hidden until the callback installs safe prose. */
         final boolean bufferedOutput;
+        /** Accepted checkpoint supplied to LM Studio, empty for a fresh chain. */
+        String previousResponseId;
+        /** Separates prose, safe-planner, and ad-hoc conversations. */
+        final String sessionScope;
+        /** At most one automatic corrective turn is permitted. */
+        int repairCount;
+        /** Optional per-request output ceiling; zero uses the profile ceiling. */
+        final int maxOutputTokens;
+        /** Candidate checkpoint returned by this response; commit decides its fate. */
+        String responseId;
 
-        Req(long id, long generation, boolean bufferedOutput) {
+        Req(long id, long generation, boolean bufferedOutput,
+            String previousResponseId, String sessionScope, int maxOutputTokens) {
             this.id = id;
             this.generation = generation;
             this.bufferedOutput = bufferedOutput;
+            this.previousResponseId = previousResponseId == null ? "" : previousResponseId;
+            this.sessionScope = sessionScope == null ? "" : sessionScope;
+            this.maxOutputTokens = Math.max(0, maxOutputTokens);
         }
 
         boolean isTerminal() {
@@ -207,7 +243,13 @@ public final class Llm {
      */
     public static String start(String system, String cached, String tail,
                                Completion onDone) {
-        return start(system, cached, tail, onDone, false);
+        return start(SCOPE_ADHOC, system, cached, tail, onDone, false);
+    }
+
+    /** Starts a request in an explicitly isolated stateful conversation. */
+    public static String startScoped(String scope, String system, String cached,
+                                     String tail, Completion onDone) {
+        return start(scope, system, cached, tail, onDone, false);
     }
 
     /**
@@ -217,13 +259,30 @@ public final class Llm {
      */
     public static String startBuffered(String system, String cached, String tail,
                                        Completion onDone) {
-        if (onDone == null) throw new IllegalArgumentException(
-                "a buffered request requires a completion hook");
-        return start(system, cached, tail, onDone, true);
+        return startBufferedScoped(SCOPE_ADHOC, system, cached, tail, onDone);
     }
 
-    private static String start(String system, String cached, String tail,
+    public static String startBufferedScoped(String scope, String system,
+            String cached, String tail, Completion onDone) {
+        return startBufferedScoped(scope, system, cached, tail, 0, onDone);
+    }
+
+    /** Buffered request with a deliberately small output cap (for handshakes). */
+    public static String startBufferedScoped(String scope, String system,
+            String cached, String tail, int maxOutputTokens, Completion onDone) {
+        if (onDone == null) throw new IllegalArgumentException(
+                "a buffered request requires a completion hook");
+        return start(scope, system, cached, tail, onDone, true, maxOutputTokens);
+    }
+
+    private static String start(String scope, String system, String cached, String tail,
                                 Completion onDone, boolean bufferedOutput) {
+        return start(scope, system, cached, tail, onDone, bufferedOutput, 0);
+    }
+
+    private static String start(String scope, String system, String cached, String tail,
+                                Completion onDone, boolean bufferedOutput,
+                                int maxOutputTokens) {
         final String user = tail;
         final String prefix = cached;
         final Req req;
@@ -241,104 +300,146 @@ public final class Llm {
             if (p == null) return "no active profile - check profiles.json";
             if (!p.usable()) return "profile '" + p.name + "' is not usable: " + p.describe();
 
-            long inputChars = (long) length(system) + length(cached) + length(tail);
+            String previous = "lmstudio-stateful".equals(p.kind)
+                    ? Campaign.providerResponseId(p.name, p.model, scope) : "";
+            long inputChars = previous.isEmpty()
+                    ? (long) length(system) + length(cached) + length(tail)
+                    : length(tail);
             if (inputChars > p.maxInputChars) {
                 return "prompt is " + inputChars + " characters, above profile '"
                         + p.name + "' limit of " + p.maxInputChars
                         + "; reduce history or raise maxInputChars deliberately";
             }
 
-            req = new Req(SEQ.incrementAndGet(), Campaign.generation(), bufferedOutput);
+            req = new Req(SEQ.incrementAndGet(), Campaign.generation(), bufferedOutput,
+                    previous, scope, maxOutputTokens);
             active = req;
             workerBusy = true;
         }
 
         Runnable work = () -> {
             try {
-                run(req, p, system, prefix, user);
-                // Read the outcome under the lock, then decide outside it.
-                final boolean ok;
-                final String text;
-                synchronized (LOCK) {
-                    ok = active == req
-                            && req.status[0] == Status.RECEIVED
-                            && req.full.length() > 0;
-                    text = req.full.toString();
-                }
-                if (!ok) return;
-                if (onDone == null) {
-                    synchronized (LOCK) {
-                        if (active == req && req.status[0] == Status.RECEIVED) {
-                            req.status[0] = Status.DONE;
+                String attemptSystem = system;
+                String attemptPrefix = prefix;
+                String attemptUser = user;
+                while (true) {
+                    long attemptChars = req.previousResponseId.isEmpty()
+                            ? (long) length(attemptSystem) + length(attemptPrefix)
+                                    + length(attemptUser)
+                            : length(attemptUser);
+                    if (attemptChars > p.maxInputChars) {
+                        synchronized (LOCK) {
+                            req.failKind = "request_too_large";
+                            fail(req, "corrective prompt is " + attemptChars
+                                    + " characters, above profile '" + p.name
+                                    + "' limit of " + p.maxInputChars);
                         }
+                        return;
                     }
-                    return;
-                }
+                    run(req, p, attemptSystem, attemptPrefix, attemptUser);
+                    // Read the outcome under the lock, then decide outside it.
+                    final boolean ok;
+                    final String text;
+                    synchronized (LOCK) {
+                        ok = active == req
+                                && req.status[0] == Status.RECEIVED
+                                && req.full.length() > 0;
+                        text = req.full.toString();
+                    }
+                    if (!ok) return;
+                    if (onDone == null) {
+                        synchronized (LOCK) {
+                            if (active == req && req.status[0] == Status.RECEIVED) {
+                                req.status[0] = Status.DONE;
+                            }
+                        }
+                        return;
+                    }
 
-                // This early check avoids parsing a completed response after a
-                // save change. It is deliberately NOT the correctness barrier:
-                // Campaign.commitGeneratedPage() repeats the check while
-                // holding Campaign's monitor, so reset() cannot fit between
-                // the check and the mutations.
-                if (req.generation != Campaign.generation()) {
-                    Config.log("dropping a finished page: the save changed while it"
-                            + " was being written (gen " + req.generation
-                            + " -> " + Campaign.generation() + ")");
+                    // This early check avoids parsing a completed response after a
+                    // save change. Campaign.commitGeneratedPage() repeats it while
+                    // holding Campaign's monitor; this is not the commit barrier.
+                    if (req.generation != Campaign.generation()) {
+                        Config.log("dropping a finished page: the save changed while it"
+                                + " was being written (gen " + req.generation
+                                + " -> " + Campaign.generation() + ")");
+                        synchronized (LOCK) {
+                            if (active == req && req.status[0] == Status.RECEIVED) {
+                                req.failKind = "save_changed";
+                                req.error = "the save changed while this page was being written; "
+                                        + "nothing was saved";
+                                req.status[0] = Status.CANCELLED;
+                            }
+                        }
+                        return;
+                    }
                     synchronized (LOCK) {
-                        if (active == req && req.status[0] == Status.RECEIVED) {
-                            req.failKind = "save_changed";
-                            req.error = "the save changed while this page was being written; "
-                                    + "nothing was saved";
-                            req.status[0] = Status.CANCELLED;
+                        if (active != req || req.status[0] != Status.RECEIVED) return;
+                        req.status[0] = Status.COMMITTING;
+                    }
+                    CompletionResult result;
+                    try {
+                        result = onDone.complete(req.generation, text);
+                    } catch (Throwable t) {
+                        Config.log("post-stream hook failed: " + t);
+                        result = CompletionResult.failure("postprocess",
+                                "the completed page could not be validated or saved");
+                    }
+                    if (result == null && req.bufferedOutput) {
+                        result = CompletionResult.failure("postprocess",
+                                "the buffered planner did not install a validated page");
+                    }
+
+                    if (result != null && result.retryTail != null
+                            && req.repairCount == 0) {
+                        attemptSystem = result.retrySystem;
+                        attemptPrefix = result.retryCached;
+                        attemptUser = result.retryTail;
+                        synchronized (LOCK) {
+                            if (active != req || req.status[0] != Status.COMMITTING) return;
+                            if ("lmstudio-stateful".equals(p.kind)) {
+                                // The rejected response is useful context for its one
+                                // correction, but is never accepted by the campaign.
+                                req.previousResponseId = req.responseId == null
+                                        ? "" : req.responseId;
+                            } else {
+                                req.previousResponseId = "";
+                            }
+                            resetForRepair(req);
+                        }
+                        Config.log("page validation requested one corrective turn");
+                        continue;
+                    }
+                    if (result != null && result.retryTail != null) {
+                        result = CompletionResult.failure("invalid_output",
+                                "the corrective reply was still not a valid page");
+                    }
+
+                    boolean recordedFailure = false;
+                    synchronized (LOCK) {
+                        if (active != req || req.status[0] != Status.COMMITTING) return;
+                        if (result == null) {
+                            req.status[0] = Status.DONE;
+                        } else if (result.replacement != null) {
+                            req.full.setLength(0);
+                            req.full.append(result.replacement);
+                            req.pending.setLength(0);
+                            req.pending.append(result.replacement);
+                            req.status[0] = Status.DONE;
+                        } else {
+                            req.full.setLength(0);
+                            req.pending.setLength(0);
+                            req.failKind = result.kind;
+                            req.error = Config.safeForDisplay(result.message);
+                            req.status[0] = Status.ERROR;
+                            recordedFailure = true;
                         }
                     }
-                    return;
-                }
-                if (!req.callbackRan.compareAndSet(false, true)) return; // at most once
-                synchronized (LOCK) {
-                    if (active != req || req.status[0] != Status.RECEIVED) return;
-                    req.status[0] = Status.COMMITTING;
-                }
-                CompletionResult result;
-                try {
-                    result = onDone.complete(req.generation, text);
-                } catch (Throwable t) {
-                    Config.log("post-stream hook failed: " + t);
-                    result = CompletionResult.failure("postprocess",
-                            "the completed page could not be validated or saved");
-                }
-                if (result == null && req.bufferedOutput) {
-                    result = CompletionResult.failure("postprocess",
-                            "the buffered planner did not install a validated page");
-                }
-                boolean recordedFailure = false;
-                synchronized (LOCK) {
-                    if (active != req || req.status[0] != Status.COMMITTING) return;
-                    if (result == null) {
-                        req.status[0] = Status.DONE;
-                    } else if (result.replacement != null) {
-                        req.full.setLength(0);
-                        req.full.append(result.replacement);
-                        req.pending.setLength(0);
-                        req.pending.append(result.replacement);
-                        req.status[0] = Status.DONE;
-                    } else {
-                        req.failKind = result.kind;
-                        req.error = Config.safeForDisplay(result.message);
-                        req.status[0] = Status.ERROR;
-                        recordedFailure = true;
+                    if (recordedFailure) {
+                        Config.log("page rejected: kind=" + result.kind
+                                + " reason=" + result.message);
                     }
-                }
-                // A rejected page was invisible outside the game itself: the
-                // player saw a fault message on the device, but nothing
-                // reached console.txt unless onDone.complete() threw. Both
-                // result.kind and result.message are structural/diagnostic
-                // ("the page was N words; safe range is ...") - never the
-                // model's actual prose - so logging them is safe and is the
-                // only way this is diagnosable after the fact.
-                if (recordedFailure) {
-                    Config.log("page rejected: kind=" + result.kind
-                            + " reason=" + result.message);
+                    return;
                 }
             } finally {
                 // The request slot includes its success commit. Releasing it
@@ -360,6 +461,26 @@ public final class Llm {
             return "the background writer could not be started";
         }
         return null;
+    }
+
+    /** Resets transport/output state while retaining request identity and campaign guard. */
+    private static void resetForRepair(Req req) {
+        req.repairCount++;
+        req.full.setLength(0);
+        req.pending.setLength(0);
+        req.error = null;
+        req.failKind = null;
+        req.retryAfter = 0;
+        req.startedAt = System.currentTimeMillis();
+        req.firstTokenAt = 0;
+        req.inputTokens = 0;
+        req.cacheRead = 0;
+        req.cacheWrite = 0;
+        req.outputTokens = 0;
+        req.sawTerminal = false;
+        req.responseId = null;
+        req.body = null;
+        req.status[0] = Status.CONNECTING;
     }
 
     /**
@@ -398,6 +519,15 @@ public final class Llm {
      * Cheap enough to call every frame.
      */
     public static String poll() {
+        return statusJson(true);
+    }
+
+    /** Observes the active request without consuming streamed text. */
+    public static String snapshot() {
+        return statusJson(false);
+    }
+
+    private static String statusJson(boolean drain) {
         synchronized (LOCK) {
             Json j = new Json().obj();
             Req r = active;
@@ -409,12 +539,13 @@ public final class Llm {
                 return j.endObj().toString();
             }
             boolean hidden = r.bufferedOutput && r.status[0] != Status.DONE;
-            String delta = hidden ? "" : r.pending.toString();
-            r.pending.setLength(0);
+            String delta = hidden || !drain ? "" : r.pending.toString();
+            if (drain) r.pending.setLength(0);
             j.put("status", r.status[0].name());
             j.put("delta", delta);
             j.put("chars", hidden ? 0 : r.full.length());
             if (r.bufferedOutput) j.put("buffered", true);
+            if (r.repairCount > 0) j.put("repairing", true);
             j.put("done", r.isTerminal());
             if (r.error != null) j.put("error", r.error);
             if (r.failKind != null) j.put("failKind", r.failKind);
@@ -451,9 +582,25 @@ public final class Llm {
         }
     }
 
+    /** True when the latest request in this conversation ended in failure. */
+    static boolean failedInScope(String scope) {
+        synchronized (LOCK) {
+            return active != null
+                    && active.status[0] == Status.ERROR
+                    && active.sessionScope.equals(scope == null ? "" : scope);
+        }
+    }
+
     /** Seconds the provider asked us to wait, or 0. */
     public static int retryAfterSeconds() {
         synchronized (LOCK) { return active == null ? 0 : active.retryAfter; }
+    }
+
+    /** Candidate LM Studio checkpoint, visible only to the completion transaction. */
+    public static String pendingResponseId() {
+        synchronized (LOCK) {
+            return active == null || active.responseId == null ? "" : active.responseId;
+        }
     }
 
     // ----------------------------------------------------------- the request
@@ -499,6 +646,14 @@ public final class Llm {
                     rb.uri(URI.create(Endpoint.requireAllowed(p.baseUrl) + "/chat/completions"));
                     // Local servers usually want no key at all; sending an
                     // empty Authorization header upsets some of them.
+                    if (p.apiKey != null && !p.apiKey.isBlank()) {
+                        rb.header("authorization", "Bearer " + p.apiKey);
+                    }
+                }
+                case "lmstudio-stateful" -> {
+                    body = lmStudioBody(p, system, prefix, user,
+                            req.previousResponseId, req.maxOutputTokens);
+                    rb.uri(URI.create(Endpoint.requireAllowed(p.baseUrl) + "/api/v1/chat"));
                     if (p.apiKey != null && !p.apiKey.isBlank()) {
                         rb.header("authorization", "Bearer " + p.apiKey);
                     }
@@ -600,11 +755,75 @@ public final class Llm {
      */
     private static void readSse(Req req, InputStream in, String kind)
             throws Exception {
+        if ("lmstudio-stateful".equals(kind)) {
+            readSseLmStudio(req, in);
+            return;
+        }
         if (!"anthropic".equals(kind)) {
             readSseOther(req, in, kind);
             return;
         }
         readSseAnthropic(req, in);
+    }
+
+    /** LM Studio native v1 stream: deltas arrive before an authoritative chat.end. */
+    private static void readSseLmStudio(Req req, InputStream in) throws Exception {
+        int badEvents = 0;
+        try (InputStream limited = new LimitedInputStream(in, MAX_SSE_BYTES,
+                     "the provider stream exceeded " + MAX_SSE_BYTES + " bytes");
+             BufferedReader r = new BufferedReader(
+                     new InputStreamReader(limited, StandardCharsets.UTF_8.newDecoder()
+                             .onMalformedInput(CodingErrorAction.REPORT)
+                             .onUnmappableCharacter(CodingErrorAction.REPORT)))) {
+            String line;
+            while ((line = readLineBounded(r, MAX_SSE_LINE)) != null) {
+                if (req.cancelled.get()) { Config.log("stream cancelled by player"); return; }
+                if (line.isEmpty() || !line.startsWith("data:")) continue;
+                String payload = line.substring(5).trim();
+                if (payload.isEmpty()) continue;
+                Map<String, Object> ev;
+                try {
+                    ev = JsonParse.parseObject(payload);
+                } catch (Throwable t) {
+                    if (++badEvents > MAX_BAD_EVENTS) {
+                        req.failKind = "protocol";
+                        fail(req, "LM Studio sent too many unreadable stream events");
+                        return;
+                    }
+                    continue;
+                }
+                String type = JsonParse.str(ev, "type", "");
+                if ("message.delta".equals(type)) {
+                    String text = JsonParse.str(ev, "content", "");
+                    if (!text.isEmpty()) append(req, text);
+                } else if ("error".equals(type)) {
+                    Map<String, Object> error = JsonParse.map(ev, "error");
+                    req.failKind = "provider";
+                    fail(req, error == null ? "LM Studio reported an error"
+                            : JsonParse.str(error, "message", "LM Studio reported an error"));
+                    return;
+                } else if ("chat.end".equals(type)) {
+                    Map<String, Object> result = JsonParse.map(ev, "result");
+                    String id = result == null ? ""
+                            : JsonParse.str(result, "response_id", "");
+                    if (!id.startsWith("resp_")) {
+                        req.failKind = "protocol";
+                        fail(req, "LM Studio completed the page without a response id");
+                        return;
+                    }
+                    req.responseId = id;
+                    Map<String, Object> stats = result == null ? null
+                            : JsonParse.map(result, "stats");
+                    if (stats != null) {
+                        req.inputTokens = JsonParse.num(stats, "input_tokens", req.inputTokens);
+                        req.outputTokens = JsonParse.num(
+                                stats, "total_output_tokens", req.outputTokens);
+                    }
+                    req.sawTerminal = true;
+                    return;
+                }
+            }
+        }
     }
 
     /**
@@ -853,6 +1072,7 @@ public final class Llm {
     /** Appends streamed text - but only if this request is still the active one. */
     private static void append(Req req, String t) {
         boolean tooLarge = false;
+        boolean accepted = false;
         synchronized (LOCK) {
             if (active != req || req.isTerminal()) return;   // late bytes from a dead request
             if (req.full.length() + t.length() > MAX_OUTPUT_CHARS) {
@@ -862,8 +1082,10 @@ public final class Llm {
                 if (req.firstTokenAt == 0) req.firstTokenAt = System.currentTimeMillis();
                 req.full.append(t);
                 req.pending.append(t);
+                accepted = true;
             }
         }
+        if (accepted) LiveTrace.delta(t);
         if (tooLarge) {
             fail(req, "the provider produced more than " + MAX_OUTPUT_CHARS
                     + " characters; the page was discarded");
@@ -1074,19 +1296,9 @@ public final class Llm {
         };
     }
 
-    /**
-     * The output ceiling, scaled to the chosen page length.
-     *
-     * A fixed 520 truncated a page mid-sentence at "The yard". Truncation is
-     * strictly worse than a page running long: a long page is merely wordy,
-     * a cut one is broken AND loses its canon block. So the ceiling is a
-     * backstop against runaway generation, not the thing that sets length -
-     * the instruction in the prompt does that. Roughly 1.4 tokens per word,
-     * doubled for slack, plus room for the title and canon.
-     */
+    /** A generous runaway backstop, not a creative page-length target. */
     private static int ceiling() {
-        int words = Settings.words();
-        return Math.max(1500, (int) (words * 2.6) + 160);
+        return 12000;
     }
 
     private static int length(String s) {
@@ -1198,6 +1410,30 @@ public final class Llm {
             j.endObj();
         }
 
+        return j.endObj().toString();
+    }
+
+    /** Native LM Studio request. Only the first turn carries the fixed book prefix. */
+    private static String lmStudioBody(Config.Profile p, String system, String prefix,
+                                       String user, String previousResponseId) {
+        return lmStudioBody(p, system, prefix, user, previousResponseId, 0);
+    }
+
+    private static String lmStudioBody(Config.Profile p, String system, String prefix,
+                                       String user, String previousResponseId,
+                                       int requestMaxOutputTokens) {
+        boolean fresh = previousResponseId == null || previousResponseId.isBlank();
+        Json j = new Json().obj();
+        j.put("model", p.model);
+        j.put("stream", true);
+        j.put("store", true);
+        int cap = Math.min(p.maxTokens, ceiling());
+        if (requestMaxOutputTokens > 0) cap = Math.min(cap, requestMaxOutputTokens);
+        j.put("max_output_tokens", cap);
+        if (fresh && nativeSystem(p)) j.put("system_prompt", system);
+        String input = fresh ? joined(prefix, user) : user;
+        j.put("input", withSystem(p, fresh ? system : "", input));
+        if (!fresh) j.put("previous_response_id", previousResponseId);
         return j.endObj().toString();
     }
 

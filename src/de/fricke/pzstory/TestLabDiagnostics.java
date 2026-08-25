@@ -109,28 +109,28 @@ final class TestLabDiagnostics {
                 "later clue remains private"));
 
         DirectorBible failed = new DirectorBible();
-        failed.freeze(Scenario.byId("survival"), "Hold out.");
+        failed.freeze(Scenario.byId("conspiracy"), "Hold out.");
         out.add(new Check("director objective failure",
                 failed.transition("failed", "The refuge was overrun."),
                 "terminal failure recorded"));
 
         DirectorBible impossible = new DirectorBible();
-        impossible.freeze(Scenario.byId("road"), "Keep moving.");
+        impossible.freeze(Scenario.byId("conspiracy"), "Keep moving.");
         out.add(new Check("director impossible transition",
                 impossible.transition("impossible", "Every vehicle was destroyed."),
                 "terminal impossibility recorded"));
 
         DirectorBible rerouted = new DirectorBible();
-        rerouted.freeze(Scenario.byId("road"), "Keep moving.");
+        rerouted.freeze(Scenario.byId("conspiracy"), "Keep moving.");
         out.add(new Check("director fail-forward replacement",
                 rerouted.failForward("The vehicle route is blocked.")
                         && rerouted.statusJson().contains("\"objectiveState\":\"active\""),
                 "one replacement objective"));
         out.add(new Check("director rejects abandoned-route evidence",
-                !rerouted.observe(10, StoryEvent.VEHICLE_ENTERED, "They entered a wreck."),
+                !rerouted.observe(10, StoryEvent.ITEM_ACQUIRED, "They acquired a newspaper."),
                 "old evidence rule retired"));
         out.add(new Check("director replacement succeeds",
-                rerouted.observe(11, StoryEvent.PLACE_CHANGED, "They reached another place."),
+                rerouted.observe(11, StoryEvent.ITEM_ACQUIRED, "They acquired a radio."),
                 "fallback evidence accepted"));
 
         Json json = new Json().obj();

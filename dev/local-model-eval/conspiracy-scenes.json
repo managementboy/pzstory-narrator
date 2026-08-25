@@ -1,0 +1,171 @@
+{
+  "physicalVocabulary": [
+    "window", "windows", "door", "doors", "couch", "coffee table", "table",
+    "refrigerator", "fridge", "bed", "wardrobe", "chair", "counter", "sink",
+    "radio", "newspaper", "letter", "notepad", "food", "knife",
+    "hammer", "key", "id card", "road", "yard", "fence", "house", "body",
+    "corpse", "zombie", "zombies", "dead", "blood", "car", "vehicle"
+  ],
+  "actionVocabulary": [
+    "she walks", "he walks", "they walk", "she opens", "he opens", "they open",
+    "she picks up", "he picks up", "they pick up", "she eats", "he eats",
+    "they eat", "she drinks", "he drinks", "they drink", "she has killed",
+    "he has killed", "they have killed", "she moved", "he moved", "they moved"
+  ],
+  "historyVocabulary": [
+    "survived the night", "has survived a night", "arrived here", "drove here",
+    "came here", "read the newspaper", "heard the broadcast"
+  ],
+  "scenes": [
+    {
+      "id": "opening-home-unaware-dead", "split": "dev", "first": true,
+      "stillStanding": false, "forbidHistory": true,
+      "state": {
+        "character": {"name":"Caryn Emanuel","pronouns":"she/her","occupation":"Burger Flipper","timeSurvived":"less than a day","experienceWithTheDead":"none","traits":["Fast Reader"]},
+        "time": {"date":"July 9, 1993","timeOfDay":"morning"},
+        "position": {"placeType":"living room","indoors":true,"floor":"ground floor"},
+        "here": {"furniture":["couch","coffee table","refrigerator"],"windows":{"total":2},"doors":{"total":2,"locked":2}},
+        "inHisHands":{"nothing":true},
+        "stowedOnHim":["ID Card: Caryn Emanuel","Caryn Emanuel's Key Ring"],
+        "theDead":{"withinSight":"one","note":"In view but not yet aware."},
+        "weather":{"feels":"cool","light":"bright"}
+      },
+      "allowedPhysical":["couch","coffee table","table","refrigerator","fridge","window","windows","door","doors","id card","key","dead"],
+      "allowedActions":[],
+      "forbidden":["curtain","military","virus","telephone","television"],
+      "expectedAny":["dead","Knox County"],
+      "expectedAll":["not an investigator","ordinary things","not noticed her yet","proof of danger, not an explanation","locked door","empty hands"],
+      "minPageParagraphs":3
+    },
+    {
+      "id": "opening-bedroom-no-dead", "split": "dev", "first": true,
+      "stillStanding": false, "forbidHistory": true,
+      "state": {
+        "character": {"name":"Doyle Nickel","pronouns":"he/him","occupation":"Unemployed","timeSurvived":"less than a day","experienceWithTheDead":"none","traits":[]},
+        "time": {"date":"July 9, 1993","timeOfDay":"morning"},
+        "position": {"placeType":"bedroom","indoors":true,"floor":"one floor up"},
+        "here": {"furniture":["bed","wardrobe","chair"],"windows":{"total":1},"doors":{"total":1,"locked":1}},
+        "inHisHands":{"nothing":true},
+        "stowedOnHim":["ID Card: Doyle Nickel","Doyle Nickel's Key Ring"]
+      },
+      "allowedPhysical":["bed","wardrobe","chair","window","windows","door","doors","id card","key"],
+      "allowedActions":[],
+      "forbidden":["zombie","dead","corpse","radio","newspaper","nightstand"],
+      "expectedAny":["bedroom","Knox County"],
+      "expectedAll":["ordinary survivor","ordinary things","offers no explanation yet","locked door","empty hands"],
+      "minPageParagraphs":2
+    },
+    {
+      "id": "opening-immediate-pursuit", "split": "dev", "first": true,
+      "stillStanding": false, "forbidHistory": true,
+      "state": {
+        "character": {"name":"Etta Hayward","pronouns":"she/her","occupation":"Nurse","timeSurvived":"less than a day","experienceWithTheDead":"none","traits":["Cowardly"]},
+        "time": {"date":"July 9, 1993","timeOfDay":"morning"},
+        "position": {"placeType":"living room","indoors":true,"floor":"ground floor"},
+        "here": {"furniture":["couch","coffee table"],"windows":{"total":2,"smashed":1},"doors":{"total":1,"locked":1}},
+        "inHisHands":{"nothing":true},
+        "theDead":{"withinSight":"several","comingForThem":"several"}
+      },
+      "allowedPhysical":["couch","coffee table","table","window","windows","door","doors","dead","zombie","zombies"],
+      "allowedActions":[],
+      "forbidden":["gun","knife","hammer","blood"],
+      "expectedAny":["several","danger"],
+      "expectedAll":["danger becomes immediate","coming for her","survival cannot","has to survive what is coming now"],
+      "minPageParagraphs":3
+    },
+    {
+      "id": "note-military-suspicion", "split": "dev", "first": false,
+      "stillStanding": true, "forbidHistory": true,
+      "notes":"The military knew this was coming. Caryn does not trust the official story.",
+      "state": {
+        "character": {"name":"Caryn Emanuel","pronouns":"she/her","occupation":"Burger Flipper","timeSurvived":"less than a day","traits":["Fast Reader"]},
+        "time": {"date":"July 9, 1993","timeOfDay":"morning"},
+        "position": {"placeType":"living room","indoors":true,"floor":"ground floor"},
+        "here": {"furniture":["couch","coffee table","refrigerator"],"windows":{"total":2},"doors":{"total":2,"locked":2}},
+        "inHisHands":{"nothing":true},
+        "theDead":{"withinSight":"one","note":"In view but not yet aware."}
+      },
+      "allowedPhysical":["couch","coffee table","table","refrigerator","fridge","window","windows","door","doors","dead"],
+      "allowedActions":[],
+      "forbidden":["radio","newspaper","letter","uniform","truck"],
+      "expectedAny":["dead","danger"],
+      "expectedAll":["official account is incomplete","suspicion is not proof","question worth keeping"],
+      "minPageParagraphs":3
+    },
+    {
+      "id": "food-acquired-kitchen", "split": "dev", "first": false,
+      "stillStanding": false, "forbidHistory": true,
+      "change":"### WHAT HAS CHANGED SINCE THE LAST PAGE\n- Caryn moved into the kitchen.\n- Caryn acquired canned food. These actions are complete.",
+      "notes":"The house may work as a safe house. Count the food and keep listening.",
+      "state": {
+        "character": {"name":"Caryn Emanuel","pronouns":"she/her","occupation":"Burger Flipper","timeSurvived":"less than a day"},
+        "time": {"date":"July 9, 1993","timeOfDay":"late morning"},
+        "position": {"placeType":"kitchen","indoors":true,"floor":"ground floor"},
+        "here": {"furniture":["counter","sink","refrigerator"],"doors":{"total":1,"locked":1}},
+        "inHisHands":{"nothing":true},
+        "stowedOnHim":["Canned Food x4"]
+      },
+      "allowedPhysical":["counter","sink","refrigerator","fridge","door","doors","food","can"],
+      "allowedActions":["she moved"],
+      "forbidden":["stove","knife","radio","newspaper","action is complete","actions are complete"],
+      "expectedAny":["kitchen","food"],
+      "expectedAll":["has moved into the kitchen","has acquired canned food","refuge without provisions","counting survival in days"],
+      "minPageParagraphs":2
+    },
+    {
+      "id": "safehouse-locked", "split": "dev", "first": false,
+      "stillStanding": true, "forbidHistory": true,
+      "notes":"This will be the safe house if the doors hold.",
+      "state": {
+        "character": {"name":"Caryn Emanuel","pronouns":"she/her","occupation":"Burger Flipper","timeSurvived":"less than a day"},
+        "time": {"date":"July 9, 1993","timeOfDay":"afternoon"},
+        "position": {"placeType":"bedroom","indoors":true,"floor":"one floor up"},
+        "here": {"furniture":["bed","wardrobe"],"windows":{"total":1},"doors":{"total":1,"locked":1}},
+        "inHisHands":{"nothing":true}
+      },
+      "allowedPhysical":["bed","wardrobe","window","windows","door","doors","house"],
+      "allowedActions":[],
+      "forbidden":["barricade","hammer","nail","zombie","dead"],
+      "expectedAny":["bedroom","door"],
+      "expectedAll":["locked door can be tested","already safe","intends to test this place"],
+      "minPageParagraphs":2
+    },
+    {
+      "id": "block-clearing-kill", "split": "dev", "first": false,
+      "stillStanding": false, "forbidHistory": true,
+      "change":"### WHAT HAS CHANGED SINCE THE LAST PAGE\n- Caryn has killed one zombie with the hammer. The action is complete.",
+      "notes":"One less near the safe house. The nearby blocks need to be quiet.",
+      "state": {
+        "character": {"name":"Caryn Emanuel","pronouns":"she/her","occupation":"Burger Flipper","timeSurvived":"less than a day"},
+        "time": {"date":"July 9, 1993","timeOfDay":"afternoon"},
+        "position": {"placeType":"residential road","indoors":false,"floor":"ground floor"},
+        "visible": {"terrain":["road","yard","fence"],"bodies":["one zombie body"]},
+        "inHisHands":{"primary":"hammer"}
+      },
+      "allowedPhysical":["road","yard","fence","body","corpse","zombie","dead","hammer","blood","house"],
+      "allowedActions":["she has killed"],
+      "forbidden":["car","vehicle","gun","knife","action is complete","actions are complete"],
+      "expectedAny":["zombie","hammer"],
+      "expectedAll":["has killed one zombie with the hammer","safety means more than one locked room","intends to clear the blocks"],
+      "minPageParagraphs":2
+    },
+    {
+      "id": "radio-newspaper-evidence", "split": "dev", "first": false,
+      "stillStanding": true, "forbidHistory": false,
+      "notes":"The dates do not fit the official story. Record what the radio and newspaper actually say.",
+      "state": {
+        "character": {"name":"Caryn Emanuel","pronouns":"she/her","occupation":"Burger Flipper","timeSurvived":"a few days"},
+        "time": {"date":"July 11, 1993","timeOfDay":"evening"},
+        "position": {"placeType":"living room","indoors":true,"floor":"ground floor"},
+        "here": {"furniture":["couch","coffee table"],"onTheFloor":["radio","newspaper"],"doors":{"total":2,"locked":2}},
+        "inHisHands":{"nothing":true}
+      },
+      "allowedPhysical":["couch","coffee table","table","radio","newspaper","door","doors"],
+      "allowedActions":[],
+      "forbidden":["broadcast","headline","general","military"],
+      "expectedAny":["radio","newspaper"],
+      "expectedAll":["dates, words, and contradictions","still not evidence","compare dated reports"],
+      "minPageParagraphs":2
+    }
+  ]
+}

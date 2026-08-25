@@ -72,7 +72,7 @@ public final class CampaignEventTest {
 
             Map<String, Object> disk = JsonParse.parseObject(
                     Files.readString(store, StandardCharsets.UTF_8));
-            T.eq("successful mutation upgrades store to schema 7", 7,
+            T.eq("successful mutation upgrades store to schema 9", 9,
                     JsonParse.num(disk, "schema", 0));
             T.ok("event journal is embedded in campaign transaction",
                     disk.get("eventJournal") instanceof Map<?, ?>);
@@ -138,7 +138,7 @@ public final class CampaignEventTest {
             T.ok("first mutation after migration saves", Campaign.addTodo("migrated", "player"));
             Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
                     dir.resolve("campaign.json"), StandardCharsets.UTF_8));
-            T.eq("schema 1 saves forward as schema 7", 7,
+            T.eq("schema 1 saves forward as schema 9", 9,
                     JsonParse.num(upgraded, "schema", 0));
             T.ok("legacy canon becomes typed fact memory",
                     upgraded.get("factMemory") instanceof Map<?, ?>);
@@ -176,7 +176,7 @@ public final class CampaignEventTest {
                     Campaign.addTodo("checkpoint", "player"));
             Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
                     dir.resolve("campaign.json"), StandardCharsets.UTF_8));
-            T.eq("schema 2 saves forward as schema 7", 7,
+            T.eq("schema 2 saves forward as schema 9", 9,
                     JsonParse.num(upgraded, "schema", 0));
         } catch (Throwable t) {
             T.ok("schema 2 migration fixture completed: " + t, false);
@@ -208,7 +208,7 @@ public final class CampaignEventTest {
             T.ok("schema 3 migration checkpoints", Campaign.addTodo("checkpoint", "player"));
             Map<String, Object> upgraded = JsonParse.parseObject(Files.readString(
                     dir.resolve("campaign.json"), StandardCharsets.UTF_8));
-            T.eq("schema 3 saves forward as schema 7", 7,
+            T.eq("schema 3 saves forward as schema 9", 9,
                     JsonParse.num(upgraded, "schema", 0));
             T.ok("thread memory is added transactionally",
                     upgraded.get("threadMemory") instanceof Map<?, ?>);

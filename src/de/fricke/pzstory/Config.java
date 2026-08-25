@@ -33,7 +33,7 @@ public final class Config {
     /** One provider configuration. */
     public static final class Profile {
         public final String name;
-        public final String kind;        // "anthropic" | "openai-compatible" | "gemini"
+        public final String kind;        // anthropic | openai-compatible | gemini | lmstudio-stateful
         public final String model;
         public final String apiKey;
         public final String baseUrl;     // null for anthropic (fixed endpoint)
@@ -84,7 +84,8 @@ public final class Config {
                     m, "openAiTokenField", "max_tokens");
 
             requireLength("profile name", name, 1, 64);
-            requireOneOf("kind", kind, "anthropic", "openai-compatible", "gemini");
+            requireOneOf("kind", kind, "anthropic", "openai-compatible", "gemini",
+                    "lmstudio-stateful");
             requireLength("model", model, 1, 256);
             requireLength("apiKey", apiKey, 0, 4096);
             if (baseUrl != null) requireLength("baseUrl", baseUrl, 1, Endpoint.MAX_URL_CHARS);
@@ -94,10 +95,28 @@ public final class Config {
                     "max_tokens", "max_completion_tokens");
         }
 
+        Profile(Profile source, String model) {
+            this.name = source.name;
+            this.kind = source.kind;
+            this.model = model;
+            this.apiKey = source.apiKey;
+            this.baseUrl = source.baseUrl;
+            this.maxTokens = source.maxTokens;
+            this.maxInputChars = source.maxInputChars;
+            this.maxRequestBytes = source.maxRequestBytes;
+            this.thinkingTokens = source.thinkingTokens;
+            this.systemMode = source.systemMode;
+            this.cacheTtl = source.cacheTtl;
+            this.streamUsage = source.streamUsage;
+            this.openAiTokenField = source.openAiTokenField;
+        }
+
         /** True when this profile could actually be used for a call. */
         public boolean usable() {
             if (model.isEmpty()) return false;
-            if ("openai-compatible".equals(kind)) return baseUrl != null && !baseUrl.isEmpty();
+            if ("openai-compatible".equals(kind) || "lmstudio-stateful".equals(kind)) {
+                return baseUrl != null && !baseUrl.isEmpty();
+            }
             return !apiKey.isEmpty() && !apiKey.contains("PASTE");
         }
 
@@ -213,6 +232,17 @@ public final class Config {
     }
 
     public static synchronized Profile active() {
+        if (PROFILES.isEmpty() && loadError == null) reload();
+        Profile base = activeName == null ? null : PROFILES.get(activeName);
+        if (base != null && "lmstudio-stateful".equals(base.kind)) {
+            String selected = Settings.lmStudioModel();
+            if (selected != null && !selected.isBlank()) return new Profile(base, selected);
+        }
+        return base;
+    }
+
+    /** The configured profile without the player's local-model override. */
+    static synchronized Profile activeBase() {
         if (PROFILES.isEmpty() && loadError == null) reload();
         return activeName == null ? null : PROFILES.get(activeName);
     }

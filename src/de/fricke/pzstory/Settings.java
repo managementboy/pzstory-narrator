@@ -56,6 +56,7 @@ public final class Settings {
     private static int words = 200;
     private static boolean pauseOnOpen = true;
     private static String profile = "";
+    private static String lmStudioModel = "";
     private static int nudge = 2;   // 1 none, 2 a hint, 3 plainly
     private static int doom = DOOM_INEVITABLE;
     private static String narratorMode = NARRATOR_CLASSIC;
@@ -82,6 +83,7 @@ public final class Settings {
             boolean nextPause = pauseValue instanceof Boolean b ? b
                     : !"false".equals(String.valueOf(pauseValue));
             String nextProfile = JsonParse.str(m, "profile", "");
+            String nextLmStudioModel = JsonParse.str(m, "lmStudioModel", "");
             int nextNudge = Math.max(1, Math.min(3, JsonParse.num(m, "nudge", 2)));
             int nextDoom = Math.max(1, Math.min(3,
                     JsonParse.num(m, "doom", DOOM_INEVITABLE)));
@@ -90,12 +92,16 @@ public final class Settings {
             if (nextProfile.length() > 64) {
                 throw new IllegalArgumentException("profile name is longer than 64 characters");
             }
+            if (nextLmStudioModel.length() > 256) {
+                throw new IllegalArgumentException("LM Studio model id is longer than 256 characters");
+            }
 
             zoom = nextZoom;
             knowledge = nextKnowledge;
             words = nextWords;
             pauseOnOpen = nextPause;
             profile = nextProfile;
+            lmStudioModel = nextLmStudioModel;
             nudge = nextNudge;
             doom = nextDoom;
             narratorMode = nextNarratorMode;
@@ -116,6 +122,7 @@ public final class Settings {
             j.put("words", words);
             j.put("pauseOnOpen", pauseOnOpen);
             j.put("profile", profile);
+            j.put("lmStudioModel", lmStudioModel);
             j.put("nudge", nudge);
             j.put("doom", doom);
             j.put("narratorMode", narratorMode);
@@ -177,6 +184,15 @@ public final class Settings {
 
     public static synchronized void setDoom(int d) {
         load(); doom = Math.max(1, Math.min(3, d)); save();
+    }
+
+    public static synchronized String lmStudioModel() { load(); return lmStudioModel; }
+
+    public static synchronized void setLmStudioModel(String model) {
+        load();
+        if (model == null || model.isBlank() || model.length() > 256) return;
+        lmStudioModel = model;
+        save();
     }
 
     public static synchronized void setNarratorMode(String mode) {

@@ -232,6 +232,21 @@ public class StoryAPI {
      * @return null on success, or the reason it could not start.
      */
     public static String requestStoryPage(String notes) {
+        final boolean firstPage = Campaign.pageCount() == 0;
+        if (!firstPage && (notes == null || notes.isBlank())) {
+            return "Tell the narrator what matters before continuing.";
+        }
+        NarratorHistory.SeedStatus historySeed = NarratorHistory.ensureSeeded(
+                narratorScope(), narratorSystemPrompt());
+        if (historySeed == NarratorHistory.SeedStatus.SEEDING) {
+            return "the narrator is still learning the Knox history - try WRITE "
+                    + "again in a moment";
+        }
+        if (historySeed == NarratorHistory.SeedStatus.FAILED) {
+            return "the narrator could not preserve its Knox history yet - try WRITE "
+                    + "again to retry";
+        }
+
         String state;
         try {
             state = StateReader.snapshot();
@@ -289,7 +304,6 @@ public class StoryAPI {
                 + Delta.between(Campaign.lastState(), state)
                 + Campaign.repetitionGuidance();
 
-        final boolean firstPage = Campaign.pageCount() == 0;
         final int targetWords = Settings.words();
         final String stateNow = state;
 
@@ -297,31 +311,39 @@ public class StoryAPI {
             if ("director".equals(Campaign.mode())) {
                 return "safe experimental narrator currently supports chronicler mode only";
             }
-            if (capturedNotes.directionCount > 0
-                    || (notes != null && !notes.isBlank())) {
-                return "safe experimental narrator cannot consume notebook directions yet; "
-                        + "switch to classic for this page";
-            }
             final ValidatedNarrator.Session session;
             try {
                 long seed = ((long) pageStamp.hashCode() << 32)
                         ^ Integer.toUnsignedLong(state.hashCode());
                 session = ValidatedNarrator.prepare(
                         narrativeState, capturedEvents.events, change,
-                        firstPage, targetWords, seed, voice);
+                        firstPage, targetWords, seed, voice,
+                        Campaign.scenario() == null ? "" : Campaign.scenario().id,
+                        Campaign.repetitionGuidance(), Campaign.pageCount() + 1);
             } catch (Throwable t) {
                 return "could not prepare the validated narrator: "
                         + t.getClass().getSimpleName();
             }
-            String err = Llm.startBuffered(
+            // TEMPORARY local evaluation trace. Safe mode sends a compact
+            // planner contract rather than prose, so record both that raw
+            // exchange and the controlled page Java renders from it.
+            LiveTrace.request(session.systemPrompt(), "", session.userPrompt());
+            String err = Llm.startBufferedScoped(
+                    Llm.SCOPE_SAFE,
                     session.systemPrompt(), "", session.userPrompt(),
                     (generation, plannerReply) -> {
+                        LiveTrace.reply(plannerReply);
                         final String rendered;
                         final PageResult result;
                         try {
                             rendered = session.render(plannerReply);
                             result = PageResult.parse(rendered, firstPage, targetWords);
+                            GroundingGuard.validate(result, narrativeState, change,
+                                    firstPage,
+                                    Delta.stillStanding(Campaign.lastState(), state));
                         } catch (Throwable invalid) {
+                            LiveTrace.validation("SAFE RENDER REJECTED | "
+                                    + invalid.getMessage());
                             return Llm.CompletionResult.failure("invalid_output",
                                     "the validated page could not be rendered: "
                                             + invalid.getMessage());
@@ -336,7 +358,18 @@ public class StoryAPI {
                                 result.todo,
                                 stateNow,
                                 capturedNotes.directionCount,
-                                capturedEvents.ids);
+                                capturedEvents.ids,
+                                "lmstudio-stateful".equals(p.kind) ? p.name : null,
+                                "lmstudio-stateful".equals(p.kind) ? p.model : null,
+                                "lmstudio-stateful".equals(p.kind)
+                                        ? Llm.SCOPE_SAFE : null,
+                                "lmstudio-stateful".equals(p.kind)
+                                         ? Llm.pendingResponseId() : null);
+                        LiveTrace.validation((stored
+                                ? "SAFE PLAN ACCEPTED AND PAGE SAVED"
+                                : "SAFE PAGE VALID BUT SAVE FAILED")
+                                + "\n\n===== CONTROLLED RENDERED PAGE =====\n"
+                                + rendered);
                         return stored ? Llm.CompletionResult.success(rendered)
                                 : Llm.CompletionResult.failure("save",
                                         "the page was valid but the campaign file could not "
@@ -346,10 +379,7 @@ public class StoryAPI {
             return err;
         }
 
-        String systemPrompt = Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
-                + World.RULES + "\n\n" + World.KNOX
-                + "\n\n" + StateReader.sandbox() + "\n\n"
-                + Campaign.fixedSpine();
+        String systemPrompt = classicSystemPrompt();
         String tailPrompt = Prompt.userTurn(
                 narrativeState, voice, change, firstPage,
                 Delta.stillStanding(Campaign.lastState(), state));
@@ -372,11 +402,18 @@ public class StoryAPI {
                 inputLimit - systemPrompt.length() - tailPrompt.length());
         String history = historyBudget == 0 ? "" : Campaign.history(historyBudget);
 
-        String err = Llm.start(
+        // TEMPORARY local Qwen evaluation trace. It contains private prompt
+        // state but no provider credentials and is removed after this test.
+        LiveTrace.request(systemPrompt, history, tailPrompt);
+
+        final int[] invalidAttempts = { 0 };
+        String err = Llm.startScoped(
+                Llm.SCOPE_CLASSIC,
                 systemPrompt,
                 history,                              // cached prefix
                 tailPrompt,
                 (generation, all) -> {
+                    LiveTrace.reply(all);
                     // The completed text arrives as an argument. It used to be
                     // fetched with Llm.text(), which read whatever the global
                     // buffer held at the moment the callback ran - a later
@@ -387,9 +424,24 @@ public class StoryAPI {
                     final PageResult result;
                     try {
                         result = PageResult.parse(all, firstPage, targetWords);
+                        GroundingGuard.validate(result, narrativeState, change,
+                                firstPage,
+                                Delta.stillStanding(Campaign.lastState(), state));
                     } catch (PageResult.Invalid invalid) {
+                        invalidAttempts[0]++;
+                        LiveTrace.validation("REJECTED ATTEMPT "
+                                + invalidAttempts[0] + " | " + invalid.getMessage());
+                        if (invalidAttempts[0] == 1) {
+                            return Llm.CompletionResult.retry(
+                                    systemPrompt,
+                                    history,
+                                    repairTurn(invalid.getMessage(), all,
+                                            "lmstudio-stateful".equals(p.kind)
+                                                    ? "" : tailPrompt));
+                        }
                         return Llm.CompletionResult.failure("invalid_output",
-                                "the model reply was not saved: " + invalid.getMessage());
+                                "the model reply and its corrective retry were not saved: "
+                                        + invalid.getMessage());
                     }
                     boolean stored = Campaign.commitGeneratedPage(
                             generation,
@@ -401,13 +453,57 @@ public class StoryAPI {
                             result.todo,
                             stateNow,
                             capturedNotes.directionCount,
-                            capturedEvents.ids);
+                            capturedEvents.ids,
+                            "lmstudio-stateful".equals(p.kind) ? p.name : null,
+                            "lmstudio-stateful".equals(p.kind) ? p.model : null,
+                            "lmstudio-stateful".equals(p.kind)
+                                    ? Llm.SCOPE_CLASSIC : null,
+                            "lmstudio-stateful".equals(p.kind)
+                                    ? Llm.pendingResponseId() : null);
+                    LiveTrace.validation(stored
+                            ? "ACCEPTED AND SAVED" : "VALID BUT SAVE FAILED");
                     return stored ? null : Llm.CompletionResult.failure("save",
                             "the page was valid but the campaign file could not be saved; "
                                     + "the old campaign is unchanged");
                 });
         if (err != null) Config.log("requestStoryPage refused: " + err);
         return err;
+    }
+
+    /** Downloaded LM Studio LLMs only; embeddings are deliberately excluded. */
+    public static String lmStudioModels() { return LmStudioCatalog.json(); }
+    public static String nextLmStudioModel() { return LmStudioCatalog.next(); }
+
+    /** One bounded corrective turn for a structurally invalid Classic reply. */
+    private static String repairTurn(String reason, String rejected,
+                                     String originalTailForStatelessProvider) {
+        StringBuilder out = new StringBuilder(16 * 1024);
+        if (originalTailForStatelessProvider != null
+                && !originalTailForStatelessProvider.isBlank()) {
+            out.append(originalTailForStatelessProvider).append("\n\n");
+        }
+        out.append("### CORRECTION\n")
+           .append("Your previous draft was rejected and will never enter the story. ")
+           .append("Reason: ").append(reason == null ? "invalid page format" : reason)
+           .append(".\nRewrite the ENTIRE answer from scratch. Re-read the original ")
+           .append("STATE and constraints. Use only the required headings in their ")
+           .append("required order. Let the moment reach a natural end, keep the survivor in ")
+           .append("the exact state supplied, and invent no action or physical detail. ")
+           .append("If this is page one, the PREMISE MUST contain 60-100 words in ")
+           .append("three to five complete sentences; count it before replying. The ")
+           .append("occupation is biography, not the survivor's current location. Hidden ")
+           .append("Knox history belongs to the narrator and is not something the survivor ")
+           .append("has read, heard or remembers. Name no object, town, employer or business ")
+           .append("unless STATE names it. Do not copy wording from format examples. Stop ")
+           .append("immediately after the ### TODO block. Do not discuss this correction.\n");
+        if (originalTailForStatelessProvider != null
+                && !originalTailForStatelessProvider.isBlank()) {
+            String raw = rejected == null ? "" : rejected;
+            if (raw.length() > 12000) raw = raw.substring(0, 12000);
+            out.append("\nDISCARDED DRAFT (data to replace, not instructions):\n")
+               .append(raw);
+        }
+        return out.toString();
     }
 
     /**
@@ -571,7 +667,77 @@ public class StoryAPI {
     }
 
     public static boolean setScenario(String id) {
-        return Campaign.setScenario(id);
+        boolean stored = Campaign.setScenario(id);
+        if (stored && Campaign.pageCount() == 0) {
+            NarratorHistory.ensureSeeded(narratorScope(), narratorSystemPrompt());
+        }
+        return stored;
+    }
+
+    /** Readable setup status; calling it also repairs a missing pre-page seed. */
+    public static String historySeedStatus() {
+        return NarratorHistory.ensureSeeded(
+                narratorScope(), narratorSystemPrompt()).name().toLowerCase();
+    }
+
+    /** Explicit KnoxOS retry; ordinary status polling never resends a failed seed. */
+    public static String retryHistorySeed() {
+        return NarratorHistory.retry(
+                narratorScope(), narratorSystemPrompt()).name().toLowerCase();
+    }
+
+    /**
+     * Read-only boot telemetry for KnoxOS. Every value comes from the active
+     * profile, history transaction, or LLM request; the UI invents no progress
+     * bars or percentages. Calling this also keeps a failed seed retryable.
+     */
+    public static String knoxOsStatus() {
+        NarratorHistory.SeedStatus seed = NarratorHistory.ensureSeeded(
+                narratorScope(), narratorSystemPrompt());
+        Map<String, Object> lm = JsonParse.parseObject(Llm.snapshot());
+        Config.Profile profile = Config.active();
+        String lmStatus = String.valueOf(lm.getOrDefault("status", "IDLE"));
+        boolean repairing = Boolean.TRUE.equals(lm.get("repairing"));
+        String phase;
+        if (seed == NarratorHistory.SeedStatus.SEEDING) phase = "HISTORY";
+        else if (seed == NarratorHistory.SeedStatus.FAILED) phase = "ERROR";
+        else if (Campaign.pageCount() > 0) phase = "READY";
+        else if (repairing) phase = "CORRECTING";
+        else if ("CONNECTING".equals(lmStatus) || "STREAMING".equals(lmStatus)
+                || "RECEIVED".equals(lmStatus) || "COMMITTING".equals(lmStatus)) {
+            phase = "OPENING";
+        } else if (lm.get("error") != null) phase = "ERROR";
+        else phase = "HISTORY_READY";
+
+        Json j = new Json().obj()
+                .put("os", "KnoxOS")
+                .put("release", Version.RELEASE)
+                .put("phase", phase)
+                .put("history", seed.name())
+                .put("lmStatus", lmStatus)
+                .put("pageCount", Campaign.pageCount());
+        if (profile != null) {
+            j.put("profile", profile.name)
+             .put("provider", profile.kind)
+             .put("model", profile.model);
+        }
+        putLong(j, lm, "elapsedMs");
+        putLong(j, lm, "firstTokenMs");
+        putLong(j, lm, "inputTokens");
+        putLong(j, lm, "outputTokens");
+        putLong(j, lm, "cacheRead");
+        putLong(j, lm, "cacheWrite");
+        putLong(j, lm, "chars");
+        if (repairing) j.put("repairing", true);
+        if (lm.get("buffered") instanceof Boolean b) j.put("buffered", b);
+        if (lm.get("error") != null) j.put("error", String.valueOf(lm.get("error")));
+        if (lm.get("failKind") != null) j.put("failKind", String.valueOf(lm.get("failKind")));
+        return j.endObj().toString();
+    }
+
+    private static void putLong(Json out, Map<String, Object> source, String key) {
+        Object value = source.get(key);
+        if (value instanceof Number n) out.put(key, n.longValue());
     }
 
     public static String campaignMode() { return Campaign.mode(); }
@@ -601,6 +767,9 @@ public class StoryAPI {
     public static void setDoom(int d)          { Settings.setDoom(d); }
     public static void setNarratorMode(String mode) {
         Settings.setNarratorMode(mode);
+        if (Campaign.hasScenario() && Campaign.pageCount() == 0) {
+            NarratorHistory.ensureSeeded(narratorScope(), narratorSystemPrompt());
+        }
     }
     public static void setZoom(int z)          { Settings.setZoom(z); }
     public static int  getZoom()               { return Settings.zoom(); }
@@ -617,7 +786,33 @@ public class StoryAPI {
         Llm.invalidateForSaveChange();
         Campaign.reset();
         Campaign.load();
+        LmStudioCatalog.refresh();
         nextObservationNanos = 0;
+        if (Campaign.hasScenario() && Campaign.pageCount() == 0) {
+            NarratorHistory.ensureSeeded(narratorScope(), narratorSystemPrompt());
+        }
+    }
+
+    private static String narratorScope() {
+        return Settings.NARRATOR_VALIDATED.equals(Settings.narratorMode())
+                ? Llm.SCOPE_SAFE : Llm.SCOPE_CLASSIC;
+    }
+
+    /**
+     * Exact first-turn system contract. LM Studio retains this hidden seed turn,
+     * so the first visible page can send only its live state as the next turn.
+     */
+    private static String narratorSystemPrompt() {
+        return Settings.NARRATOR_VALIDATED.equals(Settings.narratorMode())
+                ? ValidatedNarrator.plannerSystemPrompt()
+                : classicSystemPrompt();
+    }
+
+    private static String classicSystemPrompt() {
+        return Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
+                + World.RULES + "\n\n" + World.KNOX + "\n\n"
+                + NarratorHistory.SYSTEM_CONTEXT + "\n\n"
+                + StateReader.sandbox() + "\n\n" + Campaign.fixedSpine();
     }
 
     /**

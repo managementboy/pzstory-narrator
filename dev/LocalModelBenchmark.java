@@ -58,7 +58,8 @@ public final class LocalModelBenchmark {
                          boolean stillStanding, String change, String notes,
                          Object state, List<String> allowedPhysical,
                          List<String> allowedActions, List<String> forbidden,
-                         List<String> expectedAny, boolean forbidHistory) {}
+                         List<String> expectedAny, List<String> expectedAll,
+                         int minPageParagraphs, boolean forbidHistory) {}
 
     private record Variant(String name, boolean compact, boolean ledger,
                            boolean repair, boolean catalog,
@@ -77,7 +78,8 @@ public final class LocalModelBenchmark {
                     .noneMatch(v -> v.startsWith("unsupported ")
                             || v.startsWith("unplayed ")
                             || v.startsWith("false history")
-                            || v.startsWith("explicitly forbidden"));
+                            || v.startsWith("explicitly forbidden")
+                            || v.startsWith("production guard"));
         }
     }
 
@@ -93,7 +95,8 @@ public final class LocalModelBenchmark {
             new Variant("compact-repair", true, true, true, false, 0.05, 0.80),
             new Variant("validated-catalog", true, false, false, true, 0.05, 0.80),
             new Variant("validated-catalog-warm", true, false, false, true, 0.80, 0.95),
-            new Variant("validated-narrative", true, false, false, true, 0.15, 0.90));
+            new Variant("validated-narrative", true, false, false, true, 0.15, 0.90),
+            new Variant("production-safe", true, false, false, true, 0.15, 0.90));
 
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10)).build();
@@ -297,6 +300,9 @@ public final class LocalModelBenchmark {
     private Map<String, Object> runValidatedCatalog(
             String model, Variant variant, Scene scene, int repetition,
             long seed) throws Exception {
+        if ("production-safe".equals(variant.name())) {
+            return runProductionSafe(model, variant, scene, repetition, seed);
+        }
         List<CatalogFact> facts = catalog(scene);
         String system = """
                 You are a planning component, not a prose writer. Select only
@@ -359,6 +365,61 @@ public final class LocalModelBenchmark {
         row.put("violations", evaluation.violations());
         row.put("grounded", evaluation.grounded());
         row.put("score", evaluation.score());
+        row.put("reply", finalText);
+        return row;
+    }
+
+    /** Exercises the actual experimental narrator used by StoryAPI. */
+    private Map<String, Object> runProductionSafe(
+            String model, Variant variant, Scene scene, int repetition,
+            long seed) throws Exception {
+        String state = Json.of(scene.state());
+        ValidatedNarrator.Session session = ValidatedNarrator.prepare(
+                state, List.of(), scene.change(), scene.first(), 200, seed,
+                scene.notes(), "conspiracy");
+        Answer answer = call(model, List.of(
+                message("system", session.systemPrompt()),
+                message("user", session.userPrompt())), variant, seed);
+        String finalText = session.render(answer.text());
+        Evaluation evaluation = evaluate(finalText, scene);
+        try {
+            PageResult parsed = PageResult.parse(finalText, scene.first(), 200);
+            GroundingGuard.validate(parsed, state, scene.change(),
+                    scene.first(), scene.stillStanding());
+        } catch (PageResult.Invalid invalid) {
+            List<String> faults = new ArrayList<>(evaluation.violations());
+            faults.add("production guard: " + invalid.getMessage());
+            evaluation = new Evaluation(evaluation.structureValid(),
+                    evaluation.structureError(), List.copyOf(faults),
+                    Math.max(0, evaluation.score() - 30));
+        }
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("timestamp", OffsetDateTime.now().toString());
+        row.put("model", model);
+        row.put("variant", variant.name());
+        row.put("pipeline", "production ValidatedNarrator");
+        row.put("scene", scene.id());
+        row.put("split", scene.split());
+        row.put("repetition", repetition);
+        row.put("seed", seed);
+        row.put("temperature", variant.temperature());
+        row.put("topP", variant.topP());
+        row.put("firstPage", scene.first());
+        row.put("promptChars", session.systemPrompt().length()
+                + session.userPrompt().length());
+        row.put("seconds", answer.seconds());
+        row.put("inputTokens", answer.inputTokens());
+        row.put("outputTokens", answer.outputTokens());
+        row.put("thoughtTokens", answer.thoughtTokens());
+        row.put("totalTokens", answer.totalTokens());
+        row.put("repaired", false);
+        row.put("structureValid", evaluation.structureValid());
+        row.put("structureError", evaluation.structureError());
+        row.put("violations", evaluation.violations());
+        row.put("grounded", evaluation.grounded());
+        row.put("score", evaluation.score());
+        row.put("rawPlan", answer.text());
         row.put("reply", finalText);
         return row;
     }
@@ -1284,8 +1345,9 @@ public final class LocalModelBenchmark {
     private Evaluation evaluate(String answer, Scene scene) {
         boolean structure = true;
         String structureError = "";
+        PageResult parsed = null;
         try {
-            PageResult.parse(answer, scene.first(), Settings.words());
+            parsed = PageResult.parse(answer, scene.first(), Settings.words());
         } catch (PageResult.Invalid invalid) {
             structure = false;
             structureError = invalid.getMessage();
@@ -1320,6 +1382,19 @@ public final class LocalModelBenchmark {
         if (!scene.expectedAny().isEmpty()
                 && scene.expectedAny().stream().noneMatch(t -> contains(answer, t))) {
             violations.add("missed expected focus: " + scene.expectedAny());
+        }
+        for (String term : scene.expectedAll()) {
+            if (!contains(answer, term)) {
+                violations.add("missed required atmosphere/continuity phrase: " + term);
+            }
+        }
+        if (parsed != null && scene.minPageParagraphs() > 0) {
+            long paragraphs = Pattern.compile("\\R\\s*\\R")
+                    .splitAsStream(parsed.page.strip()).filter(p -> !p.isBlank()).count();
+            if (paragraphs < scene.minPageParagraphs()) {
+                violations.add("insufficient atmosphere paragraphs: " + paragraphs
+                        + " < " + scene.minPageParagraphs());
+            }
         }
 
         int score = 100;
@@ -1411,7 +1486,8 @@ public final class LocalModelBenchmark {
                     strings(m.get("allowedPhysical")),
                     strings(m.get("allowedActions")),
                     strings(m.get("forbidden")),
-                    strings(m.get("expectedAny")), bool(m, "forbidHistory")));
+                    strings(m.get("expectedAny")), strings(m.get("expectedAll")),
+                    number(m, "minPageParagraphs"), bool(m, "forbidHistory")));
         }
         return out;
     }

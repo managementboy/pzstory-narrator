@@ -19,7 +19,7 @@ public final class PageResultTest {
                 %s
 
                 ### CANON
-                - they distrust the silence upstairs
+                - [belief] they distrust the silence upstairs
 
                 ### TODO
                 - learn what made the noise
@@ -57,8 +57,18 @@ public final class PageResultTest {
                 + "\n### NOTES\nno\n### CANON\n\n### TODO\n", false, "unknown");
         reject("two TODO entries", "### TITLE\nT\n### PAGE\n" + PAGE
                 + "\n### CANON\n\n### TODO\n- one\n- two\n", false, "more than 1");
+        reject("untyped canon", "### TITLE\nT\n### PAGE\n" + PAGE
+                + "\n### CANON\n- merely uneasy\n### TODO\n", false, "[kind]");
+        reject("survivor mood is not a person fact", "### TITLE\nT\n### PAGE\n" + PAGE
+                + "\n### CANON\n- [person] the survivor feels afraid now\n### TODO\n",
+                false, "another person");
         reject("short partial page", "### TITLE\nT\n### PAGE\ncut off"
-                + "\n### CANON\n\n### TODO\n", false, "safe range");
+                + "\n### CANON\n\n### TODO\n", false, "at least 40");
+
+        PageResult naturalLong = PageResult.parse("### TITLE\nA Complete Moment\n### PAGE\n"
+                + words("unhurried", 1200) + "\n### CANON\n\n### TODO\n", false, 150);
+        T.eq("natural pages are not rejected by the old length setting",
+                1200, naturalLong.page.split("\\s+").length);
     }
 
     private static String laterReply() {

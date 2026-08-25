@@ -52,6 +52,18 @@ public final class ValidatedNarrator {
     private record Plan(List<String> focus, String mood, String title,
                         String todo, boolean valid) { }
 
+    private enum IntentFocus { NONE, SHELTER, FOOD, PERIMETER, SUSPICION, EVIDENCE }
+
+    /** The character's recorded grammatical voice, never chosen by the model. */
+    private record Voice(String subject, String object, String possessive,
+                         boolean plural) {
+        String subjectUpper() { return capitalize(subject); }
+        String possessiveUpper() { return capitalize(possessive); }
+        String agrees(String singular, String pluralForm) {
+            return plural ? pluralForm : singular;
+        }
+    }
+
     /** One immutable request context, retained until its planner call ends. */
     public static final class Session {
         private final Map<String, Object> state;
@@ -60,19 +72,26 @@ public final class ValidatedNarrator {
         private final int targetWords;
         private final long seed;
         private final String plannerContext;
+        private final String scenarioId;
+        private final Set<String> avoidedOpeningKeys;
+        private final int pageNumber;
 
         private Session(Map<String, Object> state, List<Fact> facts,
                         boolean firstPage, int targetWords, long seed,
-                        String plannerContext) {
+                        String plannerContext, String scenarioId,
+                        String repetitionGuidance, int pageNumber) {
             this.state = state;
             this.facts = List.copyOf(facts);
             this.firstPage = firstPage;
             this.targetWords = Math.max(100, Math.min(400, targetWords));
             this.seed = seed;
             this.plannerContext = safeText(plannerContext, MAX_CONTEXT);
+            this.scenarioId = safeText(scenarioId, 32).toLowerCase(Locale.ROOT);
+            this.avoidedOpeningKeys = repetitionOpeningKeys(repetitionGuidance);
+            this.pageNumber = Math.max(1, pageNumber);
         }
 
-        public String systemPrompt() { return PLANNER_SYSTEM; }
+        public String systemPrompt() { return plannerSystemPrompt(); }
 
         public String userPrompt() {
             int wanted = Math.min(4, facts.size());
@@ -84,6 +103,14 @@ public final class ValidatedNarrator {
                     .append("mood: watchful | resolute | uncertain | restrained\n")
                     .append("title: quiet | narrow | still | certain\n")
                     .append("todo: certainty | composure | patience | restraint\n")
+                    .append("Every focus value MUST be an Fxx token printed at the ")
+                    .append("start of a fact line. Never use kind names or kind= values.\n")
+                    .append("Strict JSON is required: double-quote every key and string ")
+                    .append("value, and put focus IDs inside a JSON array. Example shape: ")
+                    .append("{\"focus\":[\"F01\",\"F02\"],\"mood\":\"watchful\",")
+                    .append("\"title\":\"quiet\",\"todo\":\"certainty\"}. ")
+                    .append("Choose the requested number of IDs from the catalog; the ")
+                    .append("example IDs are only syntax.\n")
                     .append("FACT CATALOG:\n");
             for (Fact fact : facts) {
                 out.append(fact.id()).append(" | kind=")
@@ -101,7 +128,8 @@ public final class ValidatedNarrator {
         /** Validates the provider plan and returns provider-independent prose. */
         public String render(String rawPlan) {
             return renderPage(state, facts, parsePlan(rawPlan, facts),
-                    firstPage, targetWords, seed);
+                    firstPage, targetWords, seed, scenarioId, plannerContext,
+                    avoidedOpeningKeys, pageNumber);
         }
 
         int factCount() { return facts.size(); }
@@ -115,6 +143,11 @@ public final class ValidatedNarrator {
 
     private ValidatedNarrator() { }
 
+    /** The exact Safe-mode contract used both for hidden seeding and planning. */
+    public static String plannerSystemPrompt() {
+        return PLANNER_SYSTEM + "\n\n" + NarratorHistory.SYSTEM_CONTEXT;
+    }
+
     public static Session prepare(String narrativeStateJson,
                                   List<StoryEvent> events,
                                   String delta,
@@ -122,6 +155,18 @@ public final class ValidatedNarrator {
                                   int targetWords,
                                   long seed,
                                   String plannerContext) {
+        return prepare(narrativeStateJson, events, delta, firstPage,
+                targetWords, seed, plannerContext, "");
+    }
+
+    public static Session prepare(String narrativeStateJson,
+                                  List<StoryEvent> events,
+                                  String delta,
+                                  boolean firstPage,
+                                  int targetWords,
+                                  long seed,
+                                  String plannerContext,
+                                  String scenarioId) {
         Map<String, Object> state = JsonParse.parseObject(narrativeStateJson);
         List<Fact> facts = catalog(state,
                 events == null ? List.of() : events,
@@ -130,7 +175,32 @@ public final class ValidatedNarrator {
             throw new IllegalArgumentException("the validated narrator found no usable facts");
         }
         return new Session(state, facts, firstPage, targetWords, seed,
-                plannerContext == null ? "" : plannerContext);
+                plannerContext == null ? "" : plannerContext,
+                scenarioId == null ? "" : scenarioId, "", firstPage ? 1 : 2);
+    }
+
+    public static Session prepare(String narrativeStateJson,
+                                  List<StoryEvent> events,
+                                  String delta,
+                                  boolean firstPage,
+                                  int targetWords,
+                                  long seed,
+                                  String plannerContext,
+                                  String scenarioId,
+                                  String repetitionGuidance,
+                                  int pageNumber) {
+        Map<String, Object> state = JsonParse.parseObject(narrativeStateJson);
+        List<Fact> facts = catalog(state,
+                events == null ? List.of() : events,
+                delta == null ? "" : delta);
+        if (facts.isEmpty()) {
+            throw new IllegalArgumentException("the validated narrator found no usable facts");
+        }
+        return new Session(state, facts, firstPage, targetWords, seed,
+                plannerContext == null ? "" : plannerContext,
+                scenarioId == null ? "" : scenarioId,
+                repetitionGuidance == null ? "" : repetitionGuidance,
+                pageNumber);
     }
 
     private static List<Fact> catalog(Map<String, Object> state,
@@ -139,30 +209,33 @@ public final class ValidatedNarrator {
         List<Fact> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
 
-        for (StoryEvent event : events) {
-            if (event == null) continue;
-            add(out, seen, Kind.CHANGE, event.summary, event.importance,
-                    event.importance >= 50);
-        }
-        for (String change : deltaFacts(delta)) {
-            add(out, seen, Kind.CHANGE, change, 82, true);
-        }
-
         Map<String, Object> character = map(state, "character");
         String name = characterName(character);
+        Voice voice = voice(first(character, "pronouns"));
         String occupation = string(character, "occupation");
+
+        for (StoryEvent event : events) {
+            if (event == null) continue;
+            add(out, seen, Kind.CHANGE,
+                    personalizeChange(event.summary, name, voice), event.importance,
+                    event.importance >= 50);
+        }
+        for (String change : deltaFacts(delta, name, voice)) {
+            add(out, seen, Kind.CHANGE, change, 82, true);
+        }
 
         Map<String, Object> dead = map(state, "theDead");
         if (dead != null) {
             String coming = first(dead, "comingForThem");
             if (!coming.isBlank()) {
-                add(out, seen, Kind.THREAT, capitalize(coming)
-                        + " of the dead are coming for " + name + ".", 100, true);
+                add(out, seen, Kind.THREAT, deadWithVerb(coming,
+                        "is coming for " + name, "are coming for " + name),
+                        100, true);
             }
             String sight = first(dead, "withinSight");
             if (!sight.isBlank() && !sight.equalsIgnoreCase(coming)) {
-                add(out, seen, Kind.THREAT, capitalize(sight)
-                        + " of the dead are within sight.", 94, true);
+                add(out, seen, Kind.THREAT, deadWithVerb(sight,
+                        "is within sight", "are within sight"), 94, true);
             }
             String bodies = first(dead, "onTheGroundNearby", "nearbyBodies");
             if (!bodies.isBlank()) {
@@ -178,7 +251,7 @@ public final class ValidatedNarrator {
             String what = string(noise, "what");
             String distance = string(noise, "howFar");
             if (!what.isBlank()) {
-                add(out, seen, Kind.NOISE, "The survivor can hear " + what
+                add(out, seen, Kind.NOISE, name + " can hear " + what
                         + (distance.isBlank() ? "." : " " + distance + "."),
                         92, true);
             }
@@ -225,7 +298,7 @@ public final class ValidatedNarrator {
         }
 
         addVisibleFacts(out, seen, state, here);
-        addInventoryFacts(out, seen, state, delta);
+        addInventoryFacts(out, seen, state, delta, voice);
         addVehicleFacts(out, seen, state, name);
         addHealthFacts(out, seen, state, name);
         addFeelingFacts(out, seen, state, name);
@@ -277,7 +350,7 @@ public final class ValidatedNarrator {
 
     private static void addInventoryFacts(List<Fact> out, Set<String> seen,
                                           Map<String, Object> state,
-                                          String delta) {
+                                          String delta, Voice voice) {
         Map<String, Object> hands = map(state, "inHisHands");
         if (hands != null) {
             List<String> held = new ArrayList<>();
@@ -285,10 +358,11 @@ public final class ValidatedNarrator {
                 if (!"nothing".equals(entry.getKey())) held.addAll(labels(entry.getValue()));
             }
             if (held.isEmpty()) {
-                add(out, seen, Kind.INVENTORY, "Both of the survivor's hands are empty.",
+                add(out, seen, Kind.INVENTORY,
+                        "Both of " + voice.possessive + " hands are empty.",
                         54, false);
             } else {
-                add(out, seen, Kind.INVENTORY, "The survivor is holding "
+                add(out, seen, Kind.INVENTORY, voice.subjectUpper() + " is holding "
                         + naturalList(distinctLimit(held, 4)) + ".", 66, true);
             }
         }
@@ -296,9 +370,9 @@ public final class ValidatedNarrator {
             List<String> items = distinctLimit(labels(state.get(key)), 8);
             if (!items.isEmpty()) {
                 add(out, seen, Kind.INVENTORY,
-                        "wearing".equals(key) ? "The survivor is wearing "
+                        "wearing".equals(key) ? voice.subjectUpper() + " is wearing "
                                 + naturalList(items) + "."
-                                : "Items stowed on the survivor include "
+                                : "Items stowed on " + voice.object + " include "
                                         + naturalList(items) + ".",
                         38, false);
             }
@@ -312,8 +386,8 @@ public final class ValidatedNarrator {
             List<String> contents = distinctLimit(labels(firstObject(
                     bag, "contents", "items")), 10);
             add(out, seen, Kind.INVENTORY, contents.isEmpty()
-                    ? "The " + name + " is empty."
-                    : "The " + name + " contains " + naturalList(contents) + ".",
+                    ? definite(name) + " is empty."
+                    : definite(name) + " contains " + naturalList(contents) + ".",
                     bagChange ? 84 : 55, bagChange);
         }
         for (Object raw : objects(state.get("inventory"))) {
@@ -327,8 +401,8 @@ public final class ValidatedNarrator {
                 List<String> contents = distinctLimit(labels(firstObject(
                         bag, "items", "contents")), 10);
                 add(out, seen, Kind.INVENTORY, contents.isEmpty()
-                        ? "The " + name + " is empty."
-                        : "The " + name + " contains "
+                        ? definite(name) + " is empty."
+                        : definite(name) + " contains "
                                 + naturalList(contents) + ".",
                         bagChange ? 84 : 55, bagChange);
             }
@@ -482,17 +556,23 @@ public final class ValidatedNarrator {
                     text.substring(first, last + 1));
             List<String> requested = labels(parsed.get("focus"));
             int wanted = Math.min(4, facts.size());
-            List<String> focus = requested.stream().filter(known::contains)
+            List<String> selected = requested.stream().filter(known::contains)
                     .distinct().limit(wanted).toList();
             String mood = enumValue(parsed, "mood", "watchful", MOODS);
             String title = enumValue(parsed, "title", "quiet", TITLES);
             String todo = enumValue(parsed, "todo", "certainty", TODOS);
-            boolean valid = requested.size() == wanted && focus.size() == wanted
+            boolean valid = !requested.isEmpty() && requested.size() <= wanted
+                    && selected.size() == requested.size()
                     && MOODS.contains(string(parsed, "mood"))
                     && TITLES.contains(string(parsed, "title"))
                     && TODOS.contains(string(parsed, "todo"));
             if (!valid) return fallbackPlan(facts);
-            return new Plan(focus, mood, title, todo, true);
+            List<String> focus = new ArrayList<>(selected);
+            for (String id : fallbackPlan(facts).focus()) {
+                if (focus.size() >= wanted) break;
+                if (!focus.contains(id)) focus.add(id);
+            }
+            return new Plan(List.copyOf(focus), mood, title, todo, true);
         } catch (RuntimeException invalid) {
             return fallbackPlan(facts);
         }
@@ -509,17 +589,20 @@ public final class ValidatedNarrator {
     private static String renderPage(Map<String, Object> state,
                                      List<Fact> facts, Plan plan,
                                      boolean firstPage, int targetWords,
-                                     long seed) {
+                                     long seed, String scenarioId,
+                                     String plannerContext,
+                                     Set<String> avoidedOpeningKeys,
+                                     int pageNumber) {
         Map<String, Object> character = map(state, "character");
         String name = characterName(character);
-        String pronouns = first(character, "pronouns");
-        if (pronouns.isBlank()) pronouns = "they/them";
+        Voice voice = voice(first(character, "pronouns"));
         String occupation = first(character, "occupation");
         if (occupation.isBlank()) occupation = "survivor";
         List<String> traits = labels(character == null ? null : character.get("traits"));
 
         boolean threat = facts.stream().anyMatch(f -> f.kind() == Kind.THREAT
-                && f.priority() >= 90);
+                && f.priority() >= 100);
+        boolean deadVisible = facts.stream().anyMatch(f -> f.kind() == Kind.THREAT);
         boolean changed = facts.stream().anyMatch(f -> f.kind() == Kind.CHANGE);
         boolean bagChange = facts.stream().anyMatch(f -> f.kind() == Kind.CHANGE
                 && f.sentence().toLowerCase(Locale.ROOT).contains("bag"));
@@ -530,6 +613,9 @@ public final class ValidatedNarrator {
         if (threat) {
             titles = List.of("Danger Draws Near", "The Nearing Threat",
                     "No Time for Guesswork");
+        } else if (deadVisible && firstPage) {
+            titles = List.of("The Figure in Sight", "An Ordinary Morning Broken",
+                    "The First Hard Proof");
         } else if (bagChange) {
             titles = List.of("Weight Between Bags", "Nothing Newly Gained",
                     "The Shifted Burden");
@@ -552,107 +638,407 @@ public final class ValidatedNarrator {
             titles = choices.getOrDefault(plan.title(), choices.get("quiet"));
         }
 
-        LinkedHashSet<String> page = new LinkedHashSet<>();
+        String opening;
         if (threat) {
-            page.add(pick(List.of("Urgency tightens the moment.",
-                    "Danger gives the moment a sharp direction.",
-                    "The immediate threat leaves little room for distraction."), seed, 1));
+            opening = pick(List.of(
+                    "For " + name + ", the danger is no longer abstract.",
+                    "Danger has given " + name + "'s circumstances a sharp direction.",
+                    "The immediate threat leaves " + name
+                            + " little room for distraction."), seed, 1);
         } else if (changed) {
-            page.add(pick(List.of("What has just changed still carries weight.",
-                    "The latest completed event defines the immediate moment.",
-                    "A completed change gives the moment a clear edge."), seed, 2));
+            opening = pick(List.of(
+                    "What has just changed still carries weight for " + name + ".",
+                    "The latest completed event now defines " + name
+                            + "'s immediate circumstances.",
+                    "A completed change has given " + name
+                            + "'s situation a clear edge."), seed, 2);
         } else {
             Map<String, List<String>> openings = Map.of(
-                    "watchful", List.of("Watchfulness gives the moment a quiet tension.",
-                            "The moment feels alert without becoming hurried."),
-                    "resolute", List.of("Resolve gives the moment a firm emotional edge.",
-                            "A restrained resolve steadies the immediate moment."),
-                    "uncertain", List.of("Uncertainty weighs on the immediate moment.",
-                            "The unknown presses close, but remains unnamed."),
-                    "restrained", List.of("Restraint keeps speculation outside the moment.",
-                            "The moment remains narrow, measured, and restrained."));
-            page.add(pick(openings.getOrDefault(plan.mood(), openings.get("watchful")),
-                    seed, 3));
+                    "watchful", List.of(name + "'s circumstances reward close attention.",
+                            "For " + name + ", the immediate facts matter most."),
+                    "resolute", List.of(name + "'s known circumstances offer a firm line.",
+                            "What is certain gives " + name + " a place to begin."),
+                    "uncertain", List.of("Uncertainty remains close to " + name + ".",
+                            "The unknown presses close to " + name
+                                    + ", but remains unnamed."),
+                    "restrained", List.of("For " + name
+                                    + ", restraint keeps speculation outside the moment.",
+                            name + "'s situation remains narrow and measured."));
+            opening = pick(openings.getOrDefault(plan.mood(), openings.get("watchful")),
+                    seed, 3);
         }
 
         Map<String, Fact> byId = new LinkedHashMap<>();
         for (Fact fact : facts) byId.put(fact.id(), fact);
+        LinkedHashMap<String, Fact> chosen = new LinkedHashMap<>();
         facts.stream().filter(Fact::essential)
                 .sorted(Comparator.comparingInt(Fact::priority).reversed())
-                .forEach(f -> page.add(f.sentence()));
+                .forEach(f -> chosen.putIfAbsent(f.id(), f));
         for (String id : plan.focus()) {
             Fact fact = byId.get(id);
-            if (fact != null) page.add(fact.sentence());
+            if (fact != null) chosen.putIfAbsent(fact.id(), fact);
         }
 
         int desired = Math.max(75, Math.min(160, targetWords - 25));
         List<Fact> remaining = facts.stream()
                 .sorted(Comparator.comparingInt(Fact::priority).reversed()).toList();
         for (Fact fact : remaining) {
-            if (wordCount(String.join(" ", page)) >= desired - 35) break;
-            page.add(fact.sentence());
+            if (wordCount(opening + " " + factText(chosen.values())) >= desired - 35) break;
+            chosen.putIfAbsent(fact.id(), fact);
         }
-        page.add(characterInterior(occupation, traits, threat, seed));
+
+        List<String> immediate = new ArrayList<>();
+        List<String> context = new ArrayList<>();
+        for (Fact fact : chosen.values()) {
+            if (isImmediate(fact.kind())) immediate.add(fact.sentence());
+            else context.add(fact.sentence());
+        }
+        if (immediate.isEmpty() && !context.isEmpty()) immediate.add(context.remove(0));
+        List<String> reflection = new ArrayList<>();
+        reflection.add(characterInterior(name, voice, occupation, traits, threat, seed));
 
         List<String> fillers = threat
-                ? List.of("The danger is immediate, and uncertainty now has a direction.",
-                        "Patience still matters, but delay carries its own pressure.",
-                        "Concern narrows to what is actually approaching.",
-                        "Every other uncertainty feels smaller beside the threat.")
-                : List.of("Silence carries its own quiet pressure.",
-                        "Uncertainty gives every certain detail greater weight.",
-                        "The next decision can wait until the present is understood.",
-                        "What remains unknown stays beyond immediate attention.",
-                        "Certainty is scarce enough to matter.",
-                        "Each known detail offers a small point of balance.",
-                        "The unknown remains present without taking shape.",
-                        "Patience gives the moment room to settle.",
-                        "Concern stays close to the immediate facts.",
-                        "The situation feels narrow, but not empty.",
-                        "Attention rests on what can be confirmed.",
-                        "Unease remains controlled and specific.",
-                        "The present carries enough weight on its own.",
-                        "Stillness makes the known facts feel sharper.",
-                        "Composure offers a thin but useful boundary.");
+                ? List.of("The danger is immediate; " + voice.subject
+                                + " can leave every lesser uncertainty unanswered.",
+                        "Patience still matters to " + voice.object
+                                + ", but delay now carries its own pressure.",
+                        voice.possessiveUpper()
+                                + " attention can remain with what is actually approaching.",
+                        "Every other uncertainty is smaller beside the threat to "
+                                + voice.object + ".")
+                : List.of(voice.subjectUpper()
+                                + " can leave the unanswered questions unanswered for now.",
+                        voice.possessiveUpper()
+                                + " next decision can begin with what is known.",
+                        "What remains unknown can stay beyond " + voice.possessive
+                                + " immediate attention.",
+                        "Each known detail gives " + voice.object
+                                + " a small point of balance.",
+                        voice.subjectUpper()
+                                + " has no need to give the unknown a shape yet.",
+                        "For " + voice.object
+                                + ", the present carries enough weight on its own.");
         int filler = Math.floorMod(Long.hashCode(seed), fillers.size());
         int tried = 0;
-        while (wordCount(String.join(" ", page)) < desired && tried < fillers.size()) {
-            page.add(fillers.get(filler++ % fillers.size()));
+        while (wordCount(pageText(opening, immediate, context, reflection)) < desired
+                && tried < fillers.size()) {
+            reflection.add(fillers.get(filler++ % fillers.size()));
             tried++;
         }
 
-        String todo = todo(plan.todo(), threat, bagChange, powerLost, seed);
+        String page = pageText(opening, immediate, context, reflection);
+        if (firstPage) {
+            page = openingPageText(state, facts, plan, name, voice, scenarioId, seed);
+        } else if ("conspiracy".equals(scenarioId)) {
+            page = conspiracyPageText(state, facts, plan, name, voice,
+                    plannerContext, seed);
+        }
+        page = avoidOpeningRepeat(page, name, voice, avoidedOpeningKeys,
+                seed, pageNumber);
+
         Fact canon = plan.focus().stream().map(byId::get)
                 .filter(java.util.Objects::nonNull).findFirst()
                 .orElse(facts.get(0));
         StringBuilder out = new StringBuilder(4096);
         if (firstPage) {
             out.append("### PREMISE\n")
-                    .append(premise(name, pronouns, occupation, traits))
+                    .append(premise(name, voice, occupation, traits, scenarioId))
                     .append("\n\n");
         }
-        out.append("### TITLE\n").append(pick(titles, seed, 9))
-                .append("\n### PAGE\n").append(String.join(" ", page))
-                .append("\n### CANON\n- [state] ").append(canon.sentence())
-                .append("\n### TODO\n- ").append(todo);
+        String renderedTitle = pick(titles, seed, 9);
+        if ("conspiracy".equals(scenarioId) && pageNumber > 1) {
+            renderedTitle += " — " + roman(pageNumber);
+        }
+        out.append("### TITLE\n").append(renderedTitle)
+                .append("\n### PAGE\n").append(page)
+                .append("\n### CANON\n");
+        if ("conspiracy".equals(scenarioId)) {
+            String remembered = intentCanon(intentFocus(plannerContext), name);
+            if (!remembered.isBlank() && !firstPage) out.append(remembered);
+            // The campaign already owns its three opening tasks. A generated
+            // mood such as "be patient" must never become a fourth task.
+            out.append("\n### TODO\n");
+        } else {
+            String todo = todo(plan.todo(), threat, bagChange, powerLost, seed);
+            out.append("- [state] ").append(canon.sentence())
+                    .append("\n### TODO\n- ").append(todo);
+        }
         return out.toString();
     }
 
-    private static String premise(String name, String pronouns,
-                                  String occupation, List<String> traits) {
-        String subject = subjectPronoun(pronouns);
-        String possessive = possessivePronoun(pronouns);
+    /** Scene-focused continuation for the single supported Conspiracy arc. */
+    private static String conspiracyPageText(Map<String, Object> state,
+                                             List<Fact> facts, Plan plan,
+                                             String name, Voice voice,
+                                             String plannerContext, long seed) {
+        Map<String, Object> position = map(state, "position");
+        Map<String, Object> here = map(state, "here");
+        Map<String, Object> legacy = map(state, "visible");
+        Map<String, Object> dead = map(state, "theDead");
+        String place = first(position, "room", "placeName", "placeType");
+        if (place.isBlank()) place = first(here, "room");
+
+        StringBuilder scene = new StringBuilder();
+        List<Fact> changes = facts.stream().filter(f -> f.kind() == Kind.CHANGE)
+                .limit(2).toList();
+        if (!changes.isEmpty()) {
+            for (int i = 0; i < changes.size(); i++) {
+                String change = narrativeChange(changes.get(i).sentence(), name);
+                if (i > 0) {
+                    int verb = change.indexOf(" has ");
+                    if (verb > 0) {
+                        String lead = change.substring(0, verb);
+                        if (lead.equals(name) || name.startsWith(lead + " ")) {
+                            change = voice.subjectUpper() + change.substring(verb);
+                        }
+                    }
+                }
+                if (i > 0) scene.append(' ');
+                scene.append(change);
+            }
+        } else if (!place.isBlank()) {
+            scene.append(name).append(" remains in ")
+                    .append(placeWithArticle(humanPlace(place))).append('.');
+        } else {
+            scene.append("The immediate moment holds ").append(name).append(" still.");
+        }
+
+        List<String> visible = new ArrayList<>();
+        if (here != null) {
+            visible.addAll(labels(here.get("furniture")));
+            visible.addAll(labels(here.get("onTheFloor")));
+        }
+        if (visible.isEmpty() && legacy != null) {
+            for (Object value : legacy.values()) visible.addAll(labels(value));
+        }
+        visible = distinctLimit(visible, 4);
+        if (!visible.isEmpty()) {
+            List<String> described = visible.stream().map(ValidatedNarrator::humanItem)
+                    .map(ValidatedNarrator::withArticle).toList();
+            appendVisibleScene(scene, described, voice, seed);
+        }
+        Map<String, Object> doors = map(here, "doors");
+        if (doors != null && positive(doors, "locked")) {
+            scene.append(" The visible ")
+                    .append(number(doors, "total") == 1 ? "door is" : "doors are")
+                    .append(" locked.");
+        }
+
+        StringBuilder pressure = new StringBuilder();
+        String coming = first(dead, "comingForThem");
+        String sight = first(dead, "withinSight");
+        if (!coming.isBlank()) {
+            pressure.append(deadWithVerb(coming, "is coming for " + voice.object,
+                    "are coming for " + voice.object)).append('.');
+        } else if (!sight.isBlank()) {
+            pressure.append(deadWithVerb(sight, "is within " + voice.possessive + " sight",
+                    "are within " + voice.possessive + " sight")).append('.');
+            if (first(dead, "note").toLowerCase(Locale.ROOT).contains("not yet aware")) {
+                pressure.append(" For the moment, ")
+                        .append("one".equalsIgnoreCase(sight) ? "it has" : "they have")
+                        .append(" not noticed ").append(voice.object).append('.');
+            }
+        }
+
+        IntentFocus intent = intentFocus(plannerContext);
+        String reflection = switch (intent) {
+            case SUSPICION -> voice.subjectUpper()
+                    + voice.agrees(" suspects", " suspect")
+                    + " the official account is incomplete, but suspicion is not proof. "
+                    + "For now, every mismatch is only a question worth keeping.";
+            case EVIDENCE -> voice.subjectUpper()
+                    + voice.agrees(" wants", " want")
+                    + " dates, words, and contradictions kept separate. A story repeated "
+                    + "often is still not evidence unless the pieces agree.";
+            case PERIMETER -> "Safety means more than one locked room. "
+                    + voice.subjectUpper() + voice.agrees(" is", " are")
+                    + " measuring the danger around this place one encounter at a time.";
+            case FOOD -> "A refuge without provisions is only a pause. "
+                    + voice.subjectUpper() + voice.agrees(" is", " are")
+                    + " counting survival in days now, not in reassuring appearances.";
+            case SHELTER -> "A locked door can be tested; trust cannot. "
+                    + voice.subjectUpper() + voice.agrees(" is", " are")
+                    + " deciding whether this place can become shelter without pretending "
+                    + "it is already safe.";
+            case NONE -> moodReflection(plan.mood(), voice, seed)
+                    + " The larger explanation can wait, but the question remains.";
+        };
+
+        List<String> paragraphs = new ArrayList<>();
+        paragraphs.add(scene.toString());
+        if (pressure.length() > 0) paragraphs.add(pressure.toString());
+        paragraphs.add(reflection);
+        return String.join("\n\n", paragraphs);
+    }
+
+    /** Keeps observed objects inside a scene instead of presenting an inventory report. */
+    private static void appendVisibleScene(StringBuilder scene,
+                                           List<String> described,
+                                           Voice voice, long seed) {
+        String objects = naturalList(described);
+        switch (Math.floorMod(Long.hashCode(seed), 3)) {
+            case 0 -> scene.append(' ').append(voice.possessiveUpper())
+                    .append(" attention catches on ").append(objects)
+                    .append(". ")
+                    .append(described.size() == 1
+                            ? "It is an immediate fact"
+                            : "They are immediate facts")
+                    .append(", not an explanation.");
+            case 1 -> scene.append(" The visible scene narrows to ")
+                    .append(objects)
+                    .append("—concrete details, but no answer yet.");
+            default -> scene.append(' ').append(capitalize(objects))
+                    .append(described.size() == 1 ? " gives" : " give")
+                    .append(" the moment an ordinary shape. ")
+                    .append(voice.subjectUpper())
+                    .append(" can trust what ")
+                    .append(voice.subject)
+                    .append(voice.agrees(" sees", " see"))
+                    .append(" without deciding what it means.");
+        }
+    }
+
+    private static IntentFocus intentFocus(String context) {
+        String value = context == null ? "" : context.toLowerCase(Locale.ROOT);
+        int marker = value.lastIndexOf("player has just written");
+        if (marker >= 0) value = value.substring(marker);
+        if (containsAny(value, "radio", "newspaper", "broadcast", "dates", "evidence")) {
+            return IntentFocus.EVIDENCE;
+        }
+        if (containsAny(value, "military", "official", "conspiracy", "cover-up", "knew")) {
+            return IntentFocus.SUSPICION;
+        }
+        if (containsAny(value, "blocks", "perimeter", "clear", "quiet")) {
+            return IntentFocus.PERIMETER;
+        }
+        if (containsAny(value, "food", "provisions", "supplies", "count")) {
+            return IntentFocus.FOOD;
+        }
+        if (containsAny(value, "safe house", "safehouse", "shelter", "doors hold")) {
+            return IntentFocus.SHELTER;
+        }
+        return IntentFocus.NONE;
+    }
+
+    private static String intentCanon(IntentFocus intent, String name) {
+        return switch (intent) {
+            case SUSPICION -> "- [belief] " + name
+                    + " suspects that the official account is incomplete.";
+            case EVIDENCE -> "- [promise] " + name
+                    + " intends to compare dated reports before accepting an explanation.";
+            case PERIMETER -> "- [promise] " + name
+                    + " intends to clear the blocks around the safe house.";
+            case FOOD -> "- [promise] " + name
+                    + " intends to secure food for several days.";
+            case SHELTER -> "- [promise] " + name
+                    + " intends to test this place as a safe house.";
+            case NONE -> "";
+        };
+    }
+
+    private static boolean containsAny(String value, String... needles) {
+        for (String needle : needles) if (value.contains(needle)) return true;
+        return false;
+    }
+
+    /** Local-only anti-repetition data; never enters the model prompt. */
+    private static Set<String> repetitionOpeningKeys(String guidance) {
+        if (guidance == null || guidance.isBlank()) return Set.of();
+        Set<String> keys = new LinkedHashSet<>();
+        for (String line : guidance.split("\\R")) {
+            int marker = line.indexOf("| opening:");
+            if (marker < 0) continue;
+            String key = line.substring(marker + "| opening:".length()).strip();
+            if (!key.isBlank()) keys.add(key);
+        }
+        return Set.copyOf(keys);
+    }
+
+    private static String avoidOpeningRepeat(String page, String name, Voice voice,
+                                             Set<String> avoided, long seed,
+                                             int pageNumber) {
+        if (avoided == null || avoided.isEmpty()
+                || !avoided.contains(RepetitionGuard.openingKey(page))) return page;
+        List<String> leads = List.of(
+                "For now, " + name + " keeps fact and suspicion separate.",
+                "In this moment, " + name + " gives the known facts priority.",
+                "Uncertainty remains, but " + name + " attends to the present.",
+                "Before drawing conclusions, " + name + " measures what is known.",
+                name + " keeps the immediate facts apart from every explanation.",
+                "The next decision begins with what " + name + " can verify.",
+                "For " + name + ", attention is a form of restraint.",
+                name + " leaves the larger answer outside the present moment.",
+                "The unknown presses close, though " + name + " does not name it.",
+                name + " gives uncertainty no more weight than the evidence allows.",
+                "Caution keeps " + name + " close to what is actually present.",
+                "The situation remains unsettled, and " + name + " remains attentive.",
+                name + " holds observation apart from assumption.",
+                "Whatever the explanation, " + name + " begins with the immediate facts.",
+                "The present offers " + name + " evidence, but not yet an answer.",
+                name + " refuses to let urgency become certainty.");
+        int start = Math.floorMod(Long.hashCode(seed), leads.size());
+        for (int i = 0; i < leads.size(); i++) {
+            String candidate = leads.get((start + i) % leads.size()) + "\n\n" + page;
+            if (!avoided.contains(RepetitionGuard.openingKey(candidate))) return candidate;
+        }
+        // Reaching this requires more than sixteen identical recent openings.
+        // The diegetic entry marker preserves the page instead of discarding it.
+        return "In entry " + roman(pageNumber) + ", " + voice.subject
+                + voice.agrees(" keeps", " keep")
+                + " the immediate facts distinct.\n\n" + page;
+    }
+
+    private static String roman(int value) {
+        if (value <= 0 || value > 3999) return Integer.toString(value);
+        int[] numbers = {1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1};
+        String[] numerals = {"M", "CM", "D", "CD", "C", "XC", "L", "XL",
+                "X", "IX", "V", "IV", "I"};
+        StringBuilder out = new StringBuilder();
+        int remaining = value;
+        for (int i = 0; i < numbers.length; i++) {
+            while (remaining >= numbers[i]) {
+                out.append(numerals[i]);
+                remaining -= numbers[i];
+            }
+        }
+        return out.toString();
+    }
+
+    private static String premise(String name, Voice voice,
+                                  String occupation, List<String> traits,
+                                  String scenarioId) {
+        if ("conspiracy".equals(scenarioId)) {
+            String qualities = traitQualities(traits);
+            String role = "unemployed".equalsIgnoreCase(occupation)
+                    ? "an ordinary survivor"
+                    : withArticle(occupation.toLowerCase(Locale.ROOT));
+            String habits = qualities.isBlank()
+                    ? voice.subjectUpper() + voice.agrees(" notices", " notice")
+                            + " ordinary details"
+                    : voice.subjectUpper() + voice.agrees(" is ", " are ") + qualities;
+            return name + " is " + role
+                    + ", not an investigator. " + habits
+                    + "; those habits matter when familiar things stop fitting together. "
+                    + "In Knox County, that gives " + voice.object
+                    + " a reason to keep looking when evidence does not agree. "
+                    + voice.possessiveUpper()
+                    + " story is not about solving everything at once. It is about "
+                    + "surviving long enough to notice what happened, and deciding which "
+                    + "explanation " + voice.subject + " can trust.";
+        }
         String role = "unemployed".equalsIgnoreCase(occupation)
                 ? "an unemployed survivor"
                 : withArticle(occupation.toLowerCase(Locale.ROOT));
         StringBuilder out = new StringBuilder().append(name).append(" is ")
                 .append(role).append(" facing a world narrowed to immediate choices. ")
-                .append(subject).append(" give").append("They".equals(subject) ? "" : "s")
+                .append(voice.subjectUpper()).append(" give")
+                .append(voice.plural ? "" : "s")
                 .append(" full attention to what can be known now, allowing uncertainty ")
                 .append("to remain unanswered. Caution shapes ")
-                .append(possessive.toLowerCase(Locale.ROOT))
+                .append(voice.possessive)
                 .append(" judgment without deciding it. ")
-                .append(possessive).append(" purpose is simple: preserve composure, ")
+                .append(voice.possessiveUpper())
+                .append(" purpose is simple: preserve composure, ")
                 .append("understand the moment honestly, and make the next decision from ")
                 .append("present circumstances alone. Nothing beyond those circumstances ")
                 .append("needs a name yet.");
@@ -662,16 +1048,21 @@ public final class ValidatedNarrator {
         return out.toString();
     }
 
-    private static String characterInterior(String occupation, List<String> traits,
-                                            boolean threat, long seed) {
+    private static String characterInterior(String name, Voice voice,
+                                             String occupation, List<String> traits,
+                                             boolean threat, long seed) {
         if (traits.stream().anyMatch(t -> "cowardly".equalsIgnoreCase(t))) {
-            return pick(List.of("Fear is present, but it does not need an invented cause.",
-                    "Fear sharpens uncertainty without adding anything to the scene."),
+            return pick(List.of("Fear is close to " + voice.object
+                            + ", but it does not need an invented cause.",
+                    "Fear sharpens " + name
+                            + "'s uncertainty without adding anything to the scene."),
                     seed, 20);
         }
         if (threat) {
-            return pick(List.of("Concern narrows to the danger that is actually present.",
-                    "Every other uncertainty feels smaller beside the approaching threat."),
+            return pick(List.of(voice.possessiveUpper()
+                            + " concern can narrow to the danger that is actually present.",
+                    "Every other uncertainty is smaller beside the threat approaching "
+                            + voice.object + "."),
                     seed, 21);
         }
         String role = occupation.toLowerCase(Locale.ROOT);
@@ -689,8 +1080,10 @@ public final class ValidatedNarrator {
             return pick(List.of("Discipline narrows concern to the immediate problem.",
                     "Measured attention feels more useful than haste."), seed, 24);
         }
-        return pick(List.of("The emotional weight remains immediate and restrained.",
-                "Attention stays close to what the moment can support."), seed, 25);
+        return pick(List.of("The emotional weight on " + name
+                        + " remains immediate and restrained.",
+                voice.possessiveUpper()
+                        + " attention can stay close to what the moment supports."), seed, 25);
     }
 
     private static String todo(String choice, boolean threat, boolean bagChange,
@@ -714,7 +1107,7 @@ public final class ValidatedNarrator {
         return pick(choices.getOrDefault(choice, choices.get("certainty")), seed, 30);
     }
 
-    private static List<String> deltaFacts(String delta) {
+    private static List<String> deltaFacts(String delta, String name, Voice voice) {
         String marker = "### WHAT HAS CHANGED SINCE THE LAST PAGE";
         int start = delta.indexOf(marker);
         if (start < 0) return List.of();
@@ -732,9 +1125,266 @@ public final class ValidatedNarrator {
                 if (cut > 0) value = value.substring(0, cut);
             }
             value = safeText(value, 300);
-            if (!value.isBlank()) out.add(value);
+            if (!value.isBlank()) out.add(personalizeChange(value, name, voice));
         }
         return List.copyOf(out);
+    }
+
+    /** Rewrites only character references; plural objects such as the dead remain plural. */
+    private static String personalizeChange(String value, String name, Voice voice) {
+        String text = safeText(value, MAX_FACT_SENTENCE);
+        text = text.replaceAll("\\bThey\\b", voice.subjectUpper())
+                .replaceAll("\\bthey\\b", voice.subject)
+                .replaceAll("\\bTheir\\b", voice.possessiveUpper())
+                .replaceAll("\\btheir\\b", voice.possessive)
+                .replaceAll("\\bTheirs\\b", voice.possessiveUpper() + "s")
+                .replaceAll("\\btheirs\\b", voice.possessive + "s")
+                .replace("The survivor's", name + "'s")
+                .replace("the survivor's", name + "'s")
+                .replace("The survivor", name)
+                .replace("the survivor", name)
+                .replace("pursuing them", "pursuing " + voice.object)
+                .replace("following has lost them", "following has lost " + voice.object)
+                .replace("put there by them", "put there by " + voice.object);
+        return text;
+    }
+
+    private static boolean isImmediate(Kind kind) {
+        return kind == Kind.CHANGE || kind == Kind.THREAT || kind == Kind.PLACE
+                || kind == Kind.HEALTH || kind == Kind.ACTIVITY
+                || kind == Kind.VEHICLE || kind == Kind.NOISE;
+    }
+
+    private static String factText(java.util.Collection<Fact> facts) {
+        StringBuilder out = new StringBuilder();
+        for (Fact fact : facts) {
+            if (out.length() > 0) out.append(' ');
+            out.append(fact.sentence());
+        }
+        return out.toString();
+    }
+
+    private static String pageText(String opening, List<String> immediate,
+                                   List<String> context, List<String> reflection) {
+        List<String> paragraphs = new ArrayList<>();
+        List<String> first = new ArrayList<>();
+        first.add(opening);
+        first.addAll(immediate);
+        paragraphs.add(String.join(" ", first));
+        if (!context.isEmpty()) paragraphs.add(String.join(" ", context));
+        if (!reflection.isEmpty()) paragraphs.add(String.join(" ", reflection));
+        return String.join("\n\n", paragraphs);
+    }
+
+    /**
+     * The opening is a scene, not a catalog dump. Every concrete noun and
+     * condition still comes from state; atmosphere is carried by ordering,
+     * questions, and bounded character reaction.
+     */
+    private static String openingPageText(Map<String, Object> state,
+                                          List<Fact> facts, Plan plan,
+                                          String name, Voice voice,
+                                          String scenarioId, long seed) {
+        Map<String, Object> time = map(state, "time");
+        Map<String, Object> position = map(state, "position");
+        Map<String, Object> here = map(state, "here");
+        Map<String, Object> weather = map(state, "weather");
+        Map<String, Object> dead = map(state, "theDead");
+        Map<String, Object> character = map(state, "character");
+
+        String place = first(position, "room", "placeName", "placeType");
+        if (place.isBlank()) place = first(here, "room");
+        String when = period(time);
+        StringBuilder firstParagraph = new StringBuilder();
+        if (!when.isBlank() && !place.isBlank()) {
+            firstParagraph.append(capitalize(when)).append(" finds ").append(name)
+                    .append(" in ").append(placeWithArticle(humanPlace(place))).append('.');
+        } else if (!place.isBlank()) {
+            firstParagraph.append(name).append(" is in ")
+                    .append(placeWithArticle(humanPlace(place))).append('.');
+        } else {
+            firstParagraph.append(name).append(" takes in the immediate scene.");
+        }
+
+        List<String> furniture = distinctLimit(
+                labels(here == null ? null : here.get("furniture")), 3);
+        if (!furniture.isEmpty()) {
+            List<String> described = furniture.stream().map(ValidatedNarrator::humanItem)
+                    .map(ValidatedNarrator::withArticle)
+                    .toList();
+            firstParagraph.append(' ').append(capitalize(naturalList(described)))
+                    .append(described.size() == 1 ? " is" : " are")
+                    .append(" visible—ordinary things in an ordinary room.");
+        }
+        List<String> conditions = new ArrayList<>();
+        String feels = first(weather, "feels");
+        String light = first(weather, "light");
+        if (!feels.isBlank()) conditions.add(feels);
+        if (!light.isBlank()) conditions.add(light);
+        if (!conditions.isEmpty()) {
+            firstParagraph.append(' ').append(when.isBlank() ? "The weather" : "The " + when)
+                    .append(" is ").append(naturalList(conditions)).append('.');
+        }
+
+        String coming = first(dead, "comingForThem");
+        String sight = first(dead, "withinSight");
+        boolean one = "one".equalsIgnoreCase(coming.isBlank() ? sight : coming);
+        boolean unaware = first(dead, "note").toLowerCase(Locale.ROOT)
+                .contains("not yet aware");
+        StringBuilder secondParagraph = new StringBuilder();
+        if (!coming.isBlank()) {
+            secondParagraph.append("Then the danger becomes immediate. ")
+                    .append(deadWithVerb(coming, "is coming for " + voice.object,
+                            "are coming for " + voice.object)).append('.');
+        } else if (!sight.isBlank()) {
+            if (one) {
+                secondParagraph.append("Then ").append(voice.subject)
+                        .append(voice.agrees(" sees", " see"))
+                        .append(" it: one of the dead is within sight.");
+            } else {
+                secondParagraph.append("Then ").append(deadWithVerb(sight,
+                        "is within " + voice.possessive + " sight",
+                        "are within " + voice.possessive + " sight").toLowerCase(Locale.ROOT))
+                        .append('.');
+            }
+            if (unaware) {
+                secondParagraph.append(' ').append(one ? "It has" : "They have")
+                        .append(" not noticed ").append(voice.object).append(" yet.");
+            }
+        }
+        if ((!coming.isBlank() || !sight.isBlank())
+                && "none".equalsIgnoreCase(first(character, "experienceWithTheDead"))) {
+            secondParagraph.append(' ').append(voice.subjectUpper())
+                    .append(voice.agrees(" has", " have"))
+                    .append(" never dealt with the dead before.");
+        }
+
+        Fact accent = plan.focus().stream().map(id -> facts.stream()
+                        .filter(f -> f.id().equals(id)).findFirst().orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .filter(f -> f.kind() == Kind.NOISE || f.kind() == Kind.HEALTH
+                        || f.kind() == Kind.FEELING || f.kind() == Kind.ACTIVITY
+                        || f.kind() == Kind.VEHICLE || f.kind() == Kind.UTILITIES)
+                .findFirst().orElse(null);
+        if (accent != null) {
+            if (secondParagraph.length() > 0) secondParagraph.append(' ');
+            secondParagraph.append(accent.sentence());
+        }
+
+        Map<String, Object> doors = map(here, "doors");
+        boolean locked = doors != null && positive(doors, "locked");
+        Map<String, Object> hands = map(state, "inHisHands");
+        boolean emptyHands = hands != null && hands.containsKey("nothing")
+                && hands.keySet().stream().allMatch("nothing"::equals);
+
+        StringBuilder lastParagraph = new StringBuilder();
+        boolean deadSeen = !coming.isBlank() || !sight.isBlank();
+        if ("conspiracy".equals(scenarioId)) {
+            if (!coming.isBlank()) {
+                lastParagraph.append("What caused this can wait. Survival cannot.");
+            } else if (deadSeen) {
+                lastParagraph.append("What has happened in Knox County? The figure in sight ")
+                        .append("is proof of danger, not an explanation.");
+            } else {
+                lastParagraph.append("Something has happened in Knox County, but this room ")
+                        .append("offers no explanation yet.");
+            }
+        } else if ("survival".equals(scenarioId)) {
+            lastParagraph.append("Shelter is only a beginning; nothing here yet proves ")
+                    .append("how long it can last.");
+        } else if ("road".equals(scenarioId)) {
+            lastParagraph.append("Whatever comes next will begin here, though no road has ")
+                    .append("to be chosen yet.");
+        } else if ("character".equals(scenarioId)) {
+            lastParagraph.append("Whatever comes next will test what ")
+                    .append(voice.possessive).append(" old habits are worth.");
+        } else {
+            lastParagraph.append(voice.subjectUpper())
+                    .append(" cannot know the whole situation from this room.");
+        }
+        if (!coming.isBlank()) {
+            if (locked || emptyHands) {
+                lastParagraph.append(' ').append(locked ? "The locked door" : "The room")
+                        .append(emptyHands ? " and " + voice.possessive + " empty hands" : "")
+                        .append(emptyHands ? " are" : " is")
+                        .append(" the immediate fact")
+                        .append(emptyHands ? "s" : "")
+                        .append("; explanation comes later.");
+            }
+            lastParagraph.append(' ').append(voice.subjectUpper())
+                    .append(voice.agrees(" has", " have"))
+                    .append(" to survive what is coming now.");
+        } else if (locked || emptyHands) {
+            lastParagraph.append(' ').append(voice.subjectUpper()).append(" can begin with ")
+                    .append(locked ? "the locked door" : "the room around " + voice.object);
+            if (emptyHands) lastParagraph.append(locked ? " and " : "—")
+                    .append(voice.possessive).append(" empty hands");
+            lastParagraph.append("; those facts are real enough.");
+        }
+        if (!coming.isBlank()) {
+            // Active pursuit already supplies the urgent close above.
+        } else if (unaware && deadSeen) {
+            lastParagraph.append(' ').append(voice.subjectUpper())
+                    .append(" still has a moment before it notices ")
+                    .append(voice.object).append('.');
+        } else {
+            lastParagraph.append(' ').append(moodReflection(plan.mood(), voice, seed));
+        }
+
+        List<String> paragraphs = new ArrayList<>();
+        paragraphs.add(firstParagraph.toString());
+        if (secondParagraph.length() > 0) paragraphs.add(secondParagraph.toString());
+        paragraphs.add(lastParagraph.toString());
+        return String.join("\n\n", paragraphs);
+    }
+
+    private static String moodReflection(String mood, Voice voice, long seed) {
+        Map<String, List<String>> choices = Map.of(
+                "watchful", List.of(voice.subjectUpper()
+                                + " can watch before deciding what it means.",
+                        voice.possessiveUpper() + " attention is enough for this moment."),
+                "resolute", List.of(voice.possessiveUpper()
+                                + " next choice can begin with what is certain.",
+                        voice.subjectUpper() + " has enough to choose a first step."),
+                "uncertain", List.of("The unanswered questions can remain unanswered.",
+                        voice.subjectUpper() + voice.agrees(" does", " do")
+                                + " not need a complete explanation yet."),
+                "restrained", List.of(voice.subjectUpper()
+                                + " can leave every larger conclusion for later.",
+                        "For now, " + voice.subject + " gives the unknown no extra shape."));
+        return pick(choices.getOrDefault(mood, choices.get("watchful")), seed, 44);
+    }
+
+    private static String traitQualities(List<String> traits) {
+        List<String> qualities = new ArrayList<>();
+        for (String trait : traits) {
+            if ("keen cook".equalsIgnoreCase(trait)) qualities.add("a keen cook");
+            if ("fast reader".equalsIgnoreCase(trait)) qualities.add("a fast reader");
+        }
+        return qualities.isEmpty() ? "" : naturalList(qualities);
+    }
+
+    private static String deadWithVerb(String amount, String singularVerb,
+                                       String pluralVerb) {
+        String clean = safeText(amount, MAX_LABEL);
+        if ("one".equalsIgnoreCase(clean)) return "One of the dead " + singularVerb;
+        return capitalize(clean) + " of the dead " + pluralVerb;
+    }
+
+    private static String humanPlace(String place) {
+        String clean = safeText(place, MAX_LABEL).replace('_', ' ');
+        return clean.replaceAll("(?i)\\blivingroom\\b", "living room");
+    }
+
+    private static String humanItem(String item) {
+        return safeText(item, MAX_LABEL)
+                .replaceAll("(?i)\\bsidetable\\b", "side table");
+    }
+
+    private static String definite(String value) {
+        String clean = safeText(value, MAX_LABEL);
+        return clean.contains("'s") || clean.toLowerCase(Locale.ROOT).startsWith("the ")
+                ? clean : "The " + clean;
     }
 
     private static void add(List<Fact> out, Set<String> seen, Kind kind,
@@ -911,18 +1561,11 @@ public final class ValidatedNarrator {
                 : Character.toUpperCase(value.charAt(0)) + value.substring(1);
     }
 
-    private static String subjectPronoun(String pronouns) {
+    private static Voice voice(String pronouns) {
         String lower = pronouns.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("she")) return "She";
-        if (lower.startsWith("he")) return "He";
-        return "They";
-    }
-
-    private static String possessivePronoun(String pronouns) {
-        String lower = pronouns.toLowerCase(Locale.ROOT);
-        if (lower.startsWith("she")) return "Her";
-        if (lower.startsWith("he")) return "His";
-        return "Their";
+        if (lower.startsWith("she")) return new Voice("she", "her", "her", false);
+        if (lower.startsWith("he")) return new Voice("he", "him", "his", false);
+        return new Voice("they", "them", "their", true);
     }
 
     private static String articleFor(String value) {
@@ -930,7 +1573,25 @@ public final class ValidatedNarrator {
         String lower = value.toLowerCase(Locale.ROOT);
         if (lower.startsWith("a ") || lower.startsWith("an ")
                 || lower.startsWith("the ")) return "";
+        if (lower.startsWith("one ")) return "";
         return "aeiou".indexOf(lower.charAt(0)) >= 0 ? "an" : "a";
+    }
+
+    /** Turns terse completed-event telemetry into readable present-perfect prose. */
+    private static String narrativeChange(String value, String name) {
+        String text = safeText(value, MAX_FACT_SENTENCE)
+                .replaceAll("(?i)\\s+(?:The action is|These actions are) complete\\.\\s*$", "")
+                .strip();
+        String forename = name.contains(" ") ? name.substring(0, name.indexOf(' ')) : name;
+        for (String subject : List.of(name, forename)) {
+            for (String verb : List.of("moved", "acquired", "killed")) {
+                String prefix = subject + " " + verb + " ";
+                if (text.startsWith(prefix)) {
+                    return subject + " has " + verb + " " + text.substring(prefix.length());
+                }
+            }
+        }
+        return text;
     }
 
     private static String withArticle(String value) {

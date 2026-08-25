@@ -94,7 +94,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "12"
+local NEEDS_API = "16"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -433,6 +433,12 @@ function PZStoryBook:new()
     o.maxScroll  = 0
     o.streaming  = false
     o.chunks     = 0
+    o.autoOpeningPending = false
+    o.nextAutoSeedCheck = 0
+    o.nextKnoxOsCheck = 0
+    o.knoxStatus = nil
+    o.bootRetryAvailable = false
+    o.pendingPlayerNote = nil
     o.prevSpeed  = nil
     o.timepiece  = "none"
     -- The single source of truth for "is the device on". See toggle().
@@ -494,7 +500,7 @@ function PZStoryBook:createChildren()
     self.entry:setMultipleLine(true)
     self.entry:setMaxLines(5)
     self.entry:setMaxTextLength(480)
-    self.entry:setPlaceholderText("write what you are thinking")
+    self.entry:setPlaceholderText("tell the narrator what matters next")
     self.entry:setVisible(false)
     -- Dressed as part of the display rather than as a game dialog. The default
     -- dark slab sat on the LCD looking like a hole punched in the glass.
@@ -512,10 +518,16 @@ function PZStoryBook:layoutEntry()
     local x = sx + self.inset
     local w = sw - self.inset * 2
     local y = sy + self.inset + self.lineH * 3
+    local h = self.lineH * 5 + 8
+    if self.mode == "page" then
+        local _, keysY = self:softKeys({ 1, 2, 3 })
+        h = self.lineH * 3 + 8
+        y = keysY - h - self.lineH - 8
+    end
     self.entry:setX(x)
     self.entry:setY(y)
     self.entry:setWidth(w)
-    self.entry:setHeight(self.lineH * 5 + 8)
+    self.entry:setHeight(h)
     self.entry:setFont(self.font)
 end
 
@@ -595,12 +607,12 @@ function PZStoryBook:defaultZoom()
     return 1
 end
 
-function PZStoryBook:pause()
+function PZStoryBook:pause(force)
     local f = api("pauseOnOpen")
     if f then
         local want = true
         pcall(function() want = f() end)
-        if want == false then return end
+        if want == false and force ~= true then return end
     end
     -- Copied from SpeedControlsHandler: remember the real multiplier, not just
     -- "it was running", so 2x/3x play resumes at the speed the player chose.
@@ -642,14 +654,22 @@ function PZStoryBook:checkFirmware()
     return not self.mismatch
 end
 
-function PZStoryBook:open()
+function PZStoryBook:open(forcePause)
     if self:checkFirmware() then
         -- A fresh campaign asks what kind of story it is before anything else.
         local f = api("scenario")
         if f then
             local cur = ""
             pcall(function() cur = f() or "" end)
-            if cur == "" then self:openChooser() end
+            if cur == "" then
+                self:openChooser()
+                -- There is deliberately one scenario in this development
+                -- cycle. Do not make the player confirm a choice that does not
+                -- exist: seed it and begin the opening automatically.
+                if self.kinds and #self.kinds == 1 then self:chooseKind(1) end
+            elseif self:pageCount() == 0 then
+                self.autoOpeningPending = true
+            end
         end
         local f = api("timepiece")
         if f then pcall(function() self.timepiece = f() end) end
@@ -657,7 +677,35 @@ function PZStoryBook:open()
     self.isOpen = true
     self:addToUIManager()
     self:setVisible(true)
-    self:pause()
+    self:pause(forcePause)
+end
+
+function PZStoryBook:pageCount()
+    local f, n = api("archiveCount"), 0
+    if f then pcall(function() n = tonumber(f()) or 0 end) end
+    return n
+end
+
+--- Page zero is a boot transaction, not an empty story page.
+function PZStoryBook:isKnoxOsBooting()
+    if self.mismatch or self.mode ~= "page" or self:pageCount() > 0 then return false end
+    local f, scenario = api("scenario"), ""
+    if f then pcall(function() scenario = f() or "" end) end
+    return scenario ~= ""
+end
+
+function PZStoryBook:refreshKnoxOS(force)
+    if not self:isKnoxOsBooting() then return end
+    local now = getTimestampMs()
+    if not force and now < (self.nextKnoxOsCheck or 0) then return end
+    self.nextKnoxOsCheck = now + 250
+    local f = api("knoxOsStatus")
+    if f == nil then self:checkFirmware(); return end
+    local raw
+    if pcall(function() raw = f() end) and raw ~= nil then
+        local data = decodeObject(raw)
+        if data then self.knoxStatus = data end
+    end
 end
 
 function PZStoryBook:close()
@@ -696,16 +744,25 @@ function PZStoryBook:prerender()
     rgb(self, sx, sy, sw, sh, C.lcd)
     border(self, sx, sy, sw, sh, C.lcdEdge)
 
-    -- The text box belongs to NOTE and TO DO and to nothing else. It is a real
+    -- The text box belongs to NOTE, TO DO, and the one-shot conversation box
+    -- beneath a live page. It is a real
     -- child widget, so it paints itself over the prose wherever it was last
     -- left - which is exactly what happened when HOME was pressed out of the
     -- to-do screen: a grey slab across the last two lines of every page.
     -- Hiding it per frame means no exit path can ever leak it again.
-    if self.entry and self.mode ~= "note" and self.mode ~= "tasks" then
+    local pageComposer = self.mode == "page" and not self.streaming
+        and self.viewing == nil and self:pageCount() > 0
+    if self.entry and self.mode ~= "note" and self.mode ~= "tasks"
+            and not pageComposer then
         if self.entry:isVisible() then
             self.entry:unfocus()
             self.entry:setVisible(false)
         end
+    end
+    if pageComposer and self.entry then
+        self:layoutEntry()
+        self.entry:setPlaceholderText("tell the narrator what matters next")
+        if not self.entry:isVisible() then self.entry:setVisible(true) end
     end
 
     if self.mode == "note" then
@@ -744,7 +801,7 @@ function PZStoryBook:closeTasks()
     if self.entry then
         self.entry:unfocus()
         self.entry:setVisible(false)
-        self.entry:setPlaceholderText("write what you are thinking")
+        self.entry:setPlaceholderText("tell the narrator what matters next")
     end
     self:home()
 end
@@ -948,6 +1005,10 @@ end
 function PZStoryBook:chooseKind(i)
     local k = self.kinds and self.kinds[i]
     if k == nil then return end
+    -- Conspiracy uses Qwen for closed-world planning while Java owns every
+    -- displayed sentence. Notebook notes cross that controlled boundary.
+    local narrator = api("setNarratorMode")
+    if narrator then pcall(function() narrator("validated") end) end
     local f = api("setScenario")
     if f == nil then return end
     local ok = false
@@ -957,7 +1018,20 @@ function PZStoryBook:chooseKind(i)
         return
     end
     self.mode = "page"
-    self.statusLine = k.name .. " - press WRITE to begin"
+    self.autoOpeningPending = true
+    self.nextAutoSeedCheck = 0
+    local seedState = ""
+    local seed = api("historySeedStatus")
+    if seed then pcall(function() seedState = seed() or "" end) end
+    if seedState == "seeding" then
+        self.statusLine = k.name .. " - learning the Knox history..."
+    elseif seedState == "ready" then
+        self.statusLine = k.name .. " - history ready; beginning..."
+    elseif seedState == "failed" then
+        self.statusLine = k.name .. " - retrying the history seed..."
+    else
+        self.statusLine = k.name .. " - preparing the first page..."
+    end
 end
 
 function PZStoryBook:renderChooser(sx, sy, sw, sh)
@@ -1017,18 +1091,10 @@ local SETUP_ROWS = {
       values = { "chronicler", "director" },
       names  = { "chronicler", "director" },
       hint   = "director plans a private long campaign; choose before page one" },
-    { key = "narratorMode", label = "narrator",
-      values = { "classic", "validated" },
-      names  = { "classic", "safe (experimental)" },
-      hint   = "safe mode lets the model choose facts; Java owns the final words" },
     { key = "knowledge", label = "what the story sees",
       values = { 1, 2, 3 },
       names  = { "just me", "a glance", "glance + memory" },
       hint   = "how much of the room the narrator may use" },
-    { key = "words", label = "page length",
-      values = { 150, 200, 300 },
-      names  = { "short", "normal", "long" },
-      hint   = "roughly how many words a page runs to" },
     { key = "nudge", label = "where to go next",
       values = { 1, 2, 3 },
       names  = { "never says", "a hint", "says it plainly" },
@@ -1067,6 +1133,25 @@ function PZStoryBook:refreshSettings()
     self.cfg.narratorMode = type(data.narratorMode) == "string" and data.narratorMode or "classic"
     self.cfg.profile   = type(data.profile) == "string" and data.profile or "?"
     self.cfg.model     = type(data.model) == "string" and data.model or ""
+    self.localModels = {}
+    local lf = api("lmStudioModels")
+    local lraw
+    if lf and pcall(function() lraw = lf() end) and lraw then
+        local catalog = decodeObject(lraw)
+        if catalog and type(catalog.models) == "table" then
+            self.localModelRefreshing = catalog.refreshing == true
+            self.localModelError = type(catalog.error) == "string" and catalog.error or nil
+            for _, model in ipairs(catalog.models) do
+                if type(model) == "table" and type(model.key) == "string" then
+                    table.insert(self.localModels, model)
+                    if model.selected == true then
+                        self.cfg.localModelName = model.name or model.key
+                        self.cfg.localModelQuant = model.quantization or ""
+                    end
+                end
+            end
+        end
+    end
     local mf = api("campaignMode")
     if mf then pcall(function() self.cfg.campaignMode = mf() or "chronicler" end) end
 end
@@ -1136,8 +1221,23 @@ function PZStoryBook:renderSetup(sx, sy, sw, sh)
     y = y + self.lineH
     self:drawTextRight(tostring(self.cfg.model), sx + sw - self.inset, y,
         C.inkDim[1], C.inkDim[2], C.inkDim[3], 0.8, self.font)
+    y = y + self.lineH + 4
+
+    self:drawText("local model", x, y, C.ink[1], C.ink[2], C.ink[3], 1, self.font)
+    local modelName = self.cfg.localModelName or (self.localModelRefreshing
+        and "scanning..." or self.cfg.model)
+    self:drawTextRight("[ " .. self:fit(modelName, math.floor(innerW * 0.62)) .. " ]",
+        sx + sw - self.inset, y, C.ink[1], C.ink[2], C.ink[3], 1, self.font)
+    self.modelRow = { x = x, y = y, w = innerW, h = self.lineH }
+    y = y + self.lineH
+    local modelDetail = tostring(#(self.localModels or {})) .. " downloaded LLM(s)"
+    if self.cfg.localModelQuant and self.cfg.localModelQuant ~= "" then
+        modelDetail = modelDetail .. "  " .. self.cfg.localModelQuant
+    end
+    self:drawTextRight(modelDetail, sx + sw - self.inset, y,
+        C.inkDim[1], C.inkDim[2], C.inkDim[3], 0.8, self.font)
     y = y + self.lineH * 2
-    self:drawText("keys and models are set in", x, y,
+    self:drawText("provider keys are set in", x, y,
         C.inkDim[1], C.inkDim[2], C.inkDim[3], 0.8, self.font)
     y = y + self.lineH
     self:drawText("Zomboid/pzstory/profiles.json", x, y,
@@ -1275,6 +1375,11 @@ function PZStoryBook:renderNote(sx, sy, sw, sh)
 end
 
 function PZStoryBook:renderScreen(sx, sy, sw, sh)
+    if self:isKnoxOsBooting() then
+        self:refreshKnoxOS(false)
+        self:renderKnoxOS(sx, sy, sw, sh)
+        return
+    end
     local x = sx + self.inset
     local y = sy + self.inset
     local innerW = sw - self.inset * 2
@@ -1296,6 +1401,14 @@ function PZStoryBook:renderScreen(sx, sy, sw, sh)
     local bodyTop    = y
     local _, keysY   = self:softKeys({ 1 })
     local bodyBottom = keysY - 6
+    local composer = self.entry and self.entry:isVisible()
+        and self.mode == "page" and not self.streaming and self.viewing == nil
+    if composer then
+        bodyBottom = self.entry:getY() - self.lineH - 8
+        self:drawText("YOUR NOTE - required for the next page", x,
+            self.entry:getY() - self.lineH - 3,
+            C.inkDim[1], C.inkDim[2], C.inkDim[3], 1, self.font)
+    end
     local visible    = math.max(1, math.floor((bodyBottom - bodyTop) / self.lineH))
 
     local lines = wrap(self.pageText, cols)
@@ -1531,7 +1644,13 @@ function PZStoryBook:renderSoftKeys()
     -- Only what CHANGES lives on the glass. Navigation is moulded into the
     -- case below, where it never relabels itself.
     local labels
-    if self.mode == "note" then
+    if self:isKnoxOsBooting() then
+        -- A truthful boot screen must also offer a way to correct the profile
+        -- or local model it is truthfully reporting.  Without this key the
+        -- player could see that the wrong provider was active but could not
+        -- change it before the automatic opening began.
+        labels = self.bootRetryAvailable and { "RETRY", "SETUP" } or { "SETUP" }
+    elseif self.mode == "note" then
         -- The action key states what it will actually do. Legitimate here in a
         -- way it never was on a moulded key: this is glass.
         local act = NOTE_TYPES[self.noteType].answer and "KEEP+WRITE" or "KEEP"
@@ -1552,8 +1671,10 @@ function PZStoryBook:renderSoftKeys()
         -- While a provider hold is running the first key counts it down, so
         -- the wait is visible on the key the player is reaching for.
         local held = self:heldFor()
-        labels = { held > 0 and ("WAIT " .. held) or "WRITE",
-                   "NOTE", "TO DO", "SETUP" }
+        local first = self:pageCount() == 0
+        local write = first and "RETRY FIRST" or "WRITE NEXT"
+        labels = { held > 0 and ("WAIT " .. held) or write,
+                   "TO DO", "SETUP" }
         end
     end
 
@@ -1627,6 +1748,16 @@ function PZStoryBook:onMouseDown(x, y)
             end
             return true
         end
+        if self.modelRow and hit(self.modelRow, x, y) then
+            local f = api("nextLmStudioModel")
+            if f then
+                local name = ""
+                pcall(function() name = f() or "" end)
+                self:refreshSettings()
+                self.statusLine = name
+            end
+            return true
+        end
     end
     if self.mode == "note" then
         for _, r in ipairs(self.standingRows or {}) do
@@ -1685,7 +1816,22 @@ function PZStoryBook:onMouseUp(x, y)
 
     for _, b in ipairs(self.buttons or {}) do
         if b.id == was and hit(b, x, y) then
-            if self.mode == "choose" then
+            if self:isKnoxOsBooting() then
+                if b.id == 1 and self.bootRetryAvailable then
+                    self.bootRetryAvailable = false
+                    local retry = api("retryHistorySeed")
+                    local state = ""
+                    if retry then pcall(function() state = retry() or "" end) end
+                    self.autoOpeningPending = true
+                    self.nextAutoSeedCheck = 0
+                    self.statusLine = state == "failed"
+                        and "history seed failed again"
+                        or "retrying the Knox history..."
+                elseif (b.id == 2 and self.bootRetryAvailable)
+                    or (b.id == 1 and not self.bootRetryAvailable) then
+                    self:openSetup()
+                end
+            elseif self.mode == "choose" then
                 self:chooseKind(b.id)
             elseif self.mode == "note" then
                 if b.id <= 3 then
@@ -1713,9 +1859,8 @@ function PZStoryBook:onMouseUp(x, y)
                     if f then pcall(f) end
                     self.statusLine = "stopping..."
                 elseif b.id == 1 then self:writePage()
-                elseif b.id == 2 then self:openNote()
-                elseif b.id == 3 then self:openTasks()
-                elseif b.id == 4 then self:openSetup() end
+                elseif b.id == 2 then self:openTasks()
+                elseif b.id == 3 then self:openSetup() end
             end
             return true
         end
@@ -1730,38 +1875,49 @@ end
 
 -- ------------------------------------------------------------------ the page
 
---- @param freshNote optional: a note written seconds ago that this page should
----                  answer directly, rather than treating as background.
+--- Page one is automatic. Every later page consumes exactly one note from the
+--- field beneath the live page. The text remains there if the request fails,
+--- so a line or format error never eats what the player meant to say.
 function PZStoryBook:writePage(freshNote)
-    if self.streaming or self.mismatch then return end
+    if self.streaming or self.mismatch then return false end
+
+    local first = self:pageCount() == 0
+    local note = freshNote
+    if not first and note == nil and self.entry then note = self.entry:getText() end
+    note = tostring(note or ""):match("^%s*(.-)%s*$") or ""
+    if not first and note == "" then
+        self.statusLine = "Tell the narrator what matters before continuing."
+        if self.entry then self.entry:setVisible(true); self.entry:focus() end
+        return false
+    end
 
     -- Honour a hold the provider asked for. Hammering WRITE into a service
     -- that has just refused is how a short rate limit becomes a long one.
     local held = self:heldFor()
     if held > 0 then
         self.statusLine = "the line is still busy - " .. held .. "s"
-        return
+        return false
     end
 
     local request = api("requestStoryPage")
     if request == nil then
         self:checkFirmware()
-        return
+        return false
     end
 
-    self.statusLine = freshNote and "thinking about that..." or "reading the world..."
+    self.statusLine = note ~= "" and "thinking about that..." or "reading the world..."
     local tp = api("timepiece")
     if tp then pcall(function() self.timepiece = tp() end) end
 
     local refusal
-    local ok = pcall(function() refusal = request(freshNote or "") end)
+    local ok = pcall(function() refusal = request(note) end)
     if not ok then
         self.statusLine = "the pen would not start"
-        return
+        return false
     end
     if refusal ~= nil then
         self.statusLine = tostring(refusal)
-        return
+        return false
     end
     -- Preserve the page already on screen when a request cannot even start.
     -- Once accepted, clear it before the next tick can drain streamed text.
@@ -1769,7 +1925,80 @@ function PZStoryBook:writePage(freshNote)
     self.pageTitle, self.pageText = "", ""
     self.scroll, self.chunks = 0, 0
     self.streaming  = true
+    self.autoOpeningPending = false
+    self.pendingPlayerNote = first and nil or note
     self.statusLine = "connecting..."
+    if self.entry then self.entry:unfocus(); self.entry:setVisible(false) end
+    return true
+end
+
+--- A truthful 1993-style boot console. Completed stages get [OK], the active
+--- transaction gets [>>], and no fictional progress percentage is displayed.
+function PZStoryBook:renderKnoxOS(sx, sy, sw, sh)
+    local x, y = sx + self.inset, sy + self.inset
+    local innerW = sw - self.inset * 2
+    local d = self.knoxStatus or {}
+    local phase = tostring(d.phase or "STARTING")
+    local history = tostring(d.history or "STARTING")
+    local lm = tostring(d.lmStatus or "IDLE")
+
+    self:drawText("KnoxOS", x, y, C.ink[1], C.ink[2], C.ink[3], 1, self.font)
+    self:drawTextRight(tostring(d.release or "boot"), sx + sw - self.inset, y,
+        C.inkDim[1], C.inkDim[2], C.inkDim[3], 1, self.font)
+    y = y + self.lineH + 2
+    rgb(self, x, y, innerW, 1, C.lcdEdge)
+    y = y + self.lineH
+
+    local function line(mark, label, value)
+        local text = mark .. " " .. label
+        if value and value ~= "" then text = text .. ": " .. tostring(value) end
+        self:drawText(self:fit(text, innerW), x, y,
+            C.ink[1], C.ink[2], C.ink[3], 1, self.font)
+        y = y + self.lineH
+    end
+    line("[OK]", "PDA hardware")
+    line("[OK]", "game", "Project Zomboid Build 42")
+    line("[OK]", "profile", d.profile or "loading")
+    line(d.model and "[OK]" or "[  ]", "model", d.model or "loading")
+    y = y + math.floor(self.lineH / 2)
+
+    local historyDone = history == "READY"
+    line(historyDone and "[OK]" or (phase == "ERROR" and "[!!]" or "[>>]"),
+         "Knox history", history:lower())
+    if historyDone then
+        local openingDone = phase == "READY"
+        local openingActive = phase == "OPENING" or phase == "CORRECTING"
+        line(openingDone and "[OK]" or (phase == "ERROR" and "[!!]"
+             or (openingActive and "[>>]" or "[  ]")),
+             "opening page", phase:lower())
+    else
+        line("[  ]", "opening page", "waits for history")
+    end
+    line("    ", "LM link", lm:lower())
+    if d.repairing == true then line("[>>]", "validation", "corrective pass")
+    elseif lm == "RECEIVED" then line("[>>]", "validation", "checking reply")
+    elseif lm == "COMMITTING" then line("[>>]", "archive", "saving page") end
+
+    local elapsed = tonumber(d.elapsedMs)
+    if elapsed then line("    ", "elapsed", string.format("%.1fs", elapsed / 1000)) end
+    if d.inputTokens or d.outputTokens then
+        line("    ", "tokens", tostring(d.inputTokens or "?") .. " > "
+            .. tostring(d.outputTokens or "?"))
+    end
+    if tonumber(d.cacheRead) and tonumber(d.cacheRead) > 0 then
+        line("    ", "cache read", tostring(d.cacheRead) .. " tokens")
+    end
+    if d.error then line("[!!]", "error", asciify(tostring(d.error))) end
+
+    local footer = self.bootRetryAvailable
+        and "Boot stopped. RETRY resends page one; no story was saved."
+        or "No input required. Page one opens automatically when ready."
+    local _, keysY = self:softKeys({ 1 })
+    local footerY = keysY - self.lineH * 2 - 4
+    for _, text in ipairs(wrap(footer, math.max(16, math.floor(innerW / self.charW)))) do
+        self:drawText(text, x, footerY, C.inkDim[1], C.inkDim[2], C.inkDim[3], 1, self.font)
+        footerY = footerY + self.lineH
+    end
 end
 
 --- Walks the archive. Page 0 is the live page currently on the screen.
@@ -1935,6 +2164,36 @@ function PZStoryBook:heldFor()
     return left
 end
 
+function PZStoryBook:advanceAutomaticOpening()
+    self:refreshKnoxOS(false)
+    if not self.autoOpeningPending or self.streaming or self.mismatch then return end
+    -- SETUP is a deliberate configuration hold.  Do not start a history seed
+    -- (or a page) underneath the player while they are choosing a provider or
+    -- model. DONE returns to KnoxOS and resumes the automatic transaction.
+    if self.mode == "setup" then return end
+    local now = getTimestampMs()
+    if now < (self.nextAutoSeedCheck or 0) then return end
+    self.nextAutoSeedCheck = now + 500
+
+    local f = api("historySeedStatus")
+    if f == nil then self.autoOpeningPending = false; self:checkFirmware(); return end
+    local state = ""
+    pcall(function() state = f() or "" end)
+    if state == "ready" or state == "not_needed" then
+        self.autoOpeningPending = false
+        self.statusLine = state == "ready"
+            and "history ready - writing the first page..."
+            or "provider ready - writing the first page..."
+        if not self:writePage("") then self.bootRetryAvailable = true end
+    elseif state == "failed" then
+        self.autoOpeningPending = false
+        self.bootRetryAvailable = true
+        self.statusLine = "history seed failed - choose RETRY or SETUP"
+    else
+        self.statusLine = "learning the Knox history before page one..."
+    end
+end
+
 function PZStoryBook:drain()
     if not self.streaming or self.mismatch then return end
 
@@ -1965,6 +2224,17 @@ function PZStoryBook:drain()
     local cWrite  = tonumber(data.cacheWrite) or 0
     local delta   = data.delta
     local buffered = data.buffered == true
+    local repairing = data.repairing == true
+
+    -- The first draft failed validation. Remove it immediately while the one
+    -- permitted corrective turn is in flight; rejected prose must never look
+    -- like a page that belongs to the book.
+    if repairing and not self.repairing then
+        self.pageTitle = "CORRECTING PAGE"
+        self.pageText = "The first reply did not fit the page contract. It has been discarded while the device asks for one corrected reply."
+        self.scroll = 0
+    end
+    self.repairing = repairing
 
     if delta and delta ~= "" then self.chunks = self.chunks + 1 end
 
@@ -1979,9 +2249,13 @@ function PZStoryBook:drain()
     end
 
     if status == "CONNECTING" then
-        self.statusLine = string.format("connecting... %.1fs", elapsed / 1000)
+        self.statusLine = repairing
+            and string.format("correcting... %.1fs", elapsed / 1000)
+            or string.format("connecting... %.1fs", elapsed / 1000)
     elseif status == "STREAMING" then
-        if buffered then
+        if repairing then
+            self.statusLine = string.format("rewriting  %d chars  %.1fs", chars, elapsed / 1000)
+        elseif buffered then
             self.statusLine = string.format("planning safely... %.1fs", elapsed / 1000)
         else
             self.statusLine = string.format("writing  %d chars  %.1fs", chars, elapsed / 1000)
@@ -1994,6 +2268,7 @@ function PZStoryBook:drain()
 
     if done then
         self.streaming = false
+        self.repairing = false
         -- Back to the beginning. The view follows the writing while it
         -- streams, which is the right behaviour mid-flight and exactly the
         -- wrong one the moment it stops: a finished page is read from the
@@ -2007,6 +2282,7 @@ function PZStoryBook:drain()
             local kind  = type(data.failKind) == "string" and data.failKind or "unknown"
             local wait  = tonumber(data.retryAfter) or 0
             self:showFault(kind, wait, err)
+            if self:pageCount() == 0 then self.bootRetryAvailable = true end
         else
             -- Show what the cache did: "cached 4.2k" means that much of the
             -- book was re-read at a fraction of the price instead of resent.
@@ -2018,24 +2294,13 @@ function PZStoryBook:drain()
             end
             self.statusLine = string.format("done  %.1fs  %s>%s tok%s",
                 elapsed / 1000, tostring(inTok or "?"), tostring(outTok or "?"), cache)
-
-            -- After the FIRST page, show the reason before the page itself.
-            -- It is written in that same reply and is the answer to "why am I
-            -- doing this" - making the player go looking for it is why it
-            -- felt missing.
-            local cf, n = api("archiveCount"), 0
-            if cf then pcall(function() n = cf() or 0 end) end
-            if n == 1 then
-                local pf, why = api("premise"), ""
-                if pf then pcall(function() why = pf() or "" end) end
-                if why ~= "" then
-                    self.viewing    = 0
-                    self.pageTitle  = "WHY I AM DOING THIS"
-                    self.pageText   = why
-                    self.scroll     = 0
-                    self.statusLine = "press > for the first page"
-                end
+            -- A note is one-shot and is consumed only by a successfully saved
+            -- page. On a fault or cancellation it remains in the editor.
+            if self.pendingPlayerNote ~= nil and self.entry then
+                self.entry:setText("")
             end
+            self.pendingPlayerNote = nil
+            self.bootRetryAvailable = false
         end
     end
 end
@@ -2048,9 +2313,9 @@ table.insert(keyBinding, { value = BOOK_BIND, key = Keyboard.KEY_F7 })
 local instance = nil
 local observer = nil
 local nextObserverAt = 0
+local autoOpenPending = false
 
-local function toggle()
-    if getPlayer() == nil then return end
+local function ensureInstance()
     if instance == nil then
         -- Construction must not fail silently: without this the key just does
         -- nothing forever and the only clue is buried in console.txt.
@@ -2067,9 +2332,14 @@ local function toggle()
                     HaloTextHelper.addBadText(pl, "PZStory: device failed to start")
                 end)
             end
-            return
+            return false
         end
     end
+    return true
+end
+
+local function toggle()
+    if getPlayer() == nil or not ensureInstance() then return end
     -- Our own flag, NOT getIsVisible().
     --
     -- ISUIElement:getIsVisible() instantiates the java object if it does not
@@ -2185,6 +2455,7 @@ Events.OnGameStart.Add(function()
     instance = nil
     observer = nil
     nextObserverAt = 0
+    autoOpenPending = true
     local f = api("onGameStart")
     if f then
         pcall(f)
@@ -2212,5 +2483,15 @@ Events.OnTickEvenPaused.Add(function()
             pcall(observer)
         end
     end
-    if instance ~= nil and instance.isOpen then instance:drain() end
+    if autoOpenPending and getPlayer() ~= nil then
+        autoOpenPending = false
+        local n = 0
+        local cf = api("archiveCount")
+        if cf then pcall(function() n = tonumber(cf()) or 0 end) end
+        if n == 0 and ensureInstance() then instance:open(true) end
+    end
+    if instance ~= nil and instance.isOpen then
+        instance:advanceAutomaticOpening()
+        instance:drain()
+    end
 end)

@@ -17,8 +17,27 @@ public final class CampaignTest {
             System.setProperty("pzstory.test.root", fixture.toString());
             Campaign.reset();
 
-            T.ok("scenario is stored once", Campaign.setScenario("road"));
-            T.ok("scenario cannot change mid-book", !Campaign.setScenario("survival"));
+            String choices = Scenario.listJson();
+            T.ok("only Conspiracy is offered for this development cycle",
+                    choices.contains("\"id\":\"conspiracy\"")
+                            && !choices.contains("\"id\":\"road\"")
+                            && !choices.contains("\"id\":\"survival\"")
+                            && !choices.contains("\"id\":\"character\""));
+            T.ok("opening develops suspicion before a theory",
+                    Scenario.ALL[0].spine.contains("suspicion only")
+                            && Scenario.ALL[0].spine.contains("first few days"));
+            T.ok("conspiracy scenario is stored once", Campaign.setScenario("conspiracy"));
+            T.ok("retired scenarios are unavailable", !Campaign.setScenario("road"));
+            String openingTasks = Campaign.todoJson();
+            T.ok("scenario seeds only the three player-approved tasks",
+                    openingTasks.contains("choose and secure a safe house")
+                            && openingTasks.contains("gather food for a few days")
+                            && openingTasks.contains("clear the zombies from a few blocks")
+                            && openingTasks.split("\\\"source\\\":\\\"story\\\"", -1).length == 4);
+            T.ok("safe-place paraphrase does not duplicate safe-house goal",
+                    !Campaign.addTodo("Find a safe place to wait out this day", "story"));
+            T.ok("food paraphrase does not duplicate opening food goal",
+                    !Campaign.addTodo("Find food and stock it for later", "story"));
             T.eq("campaign defaults to chronicler", "chronicler", Campaign.mode());
             T.ok("director can be selected before page one", Campaign.setMode("director"));
             T.eq("first NEXT note stored", "will steer the next page",
@@ -94,17 +113,17 @@ public final class CampaignTest {
             Files.createDirectories(directorBlockedTmp);
             Files.writeString(directorBlockedTmp.resolve("guard"), "x", StandardCharsets.UTF_8);
             T.ok("failed matching event reports persistence failure",
-                    !Campaign.recordEvent(StoryEvent.VEHICLE_ENTERED,
-                            "They entered a working vehicle.", 70,
-                            "1993-07-10 09:55", "vehicle-7", "the road", "game"));
+                    !Campaign.recordEvent(StoryEvent.ITEM_ACQUIRED,
+                            "They acquired a newspaper.", 70,
+                            "1993-07-10 09:55", "item-newspaper", "the room", "game"));
             T.ok("failed matching event rolls Director evidence back",
                     Campaign.directorStatusJson().contains("\"objectiveState\":\"active\"")
                             && Campaign.directorStatusJson().contains("\"evidenceCount\":0"));
             deleteTree(directorBlockedTmp);
             T.ok("durable matching event completes Director objective",
-                    Campaign.recordEvent(StoryEvent.VEHICLE_ENTERED,
-                            "They entered a working vehicle.", 70,
-                            "1993-07-10 09:55", "vehicle-7", "the road", "game"));
+                    Campaign.recordEvent(StoryEvent.ITEM_ACQUIRED,
+                            "They acquired a newspaper.", 70,
+                            "1993-07-10 09:55", "item-newspaper", "the room", "game"));
             T.ok("Director success and reveal are durable together",
                     Campaign.directorStatusJson().contains("\"objectiveState\":\"succeeded\"")
                             && Campaign.directorStatusJson().contains("\"revealed\":1"));

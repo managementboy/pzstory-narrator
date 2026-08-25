@@ -5,7 +5,7 @@ public final class DirectorBibleTest {
     public static void run() {
         T.group("Campaign Director - private frozen plan");
         DirectorBible bible = new DirectorBible();
-        bible.freeze(Scenario.byId("road"), "They need to find their family.");
+        bible.freeze(Scenario.byId("conspiracy"), "They need to find their family.");
         T.ok("first page freezes a director bible", bible.frozen());
         String prompt = bible.publicPrompt();
         T.ok("provider sees exactly one active objective",
@@ -13,7 +13,7 @@ public final class DirectorBibleTest {
         T.ok("hidden revelation is not provider-visible",
                 !prompt.contains("first apparent explanation"));
         DirectorBible.Snapshot frozen = bible.snapshot();
-        bible.freeze(Scenario.byId("survival"), "A different campaign.");
+        bible.freeze(Scenario.byId("conspiracy"), "A different campaign.");
         T.eq("frozen plan cannot be regenerated", frozen, bible.snapshot());
 
         Json json = new Json().obj();
@@ -23,7 +23,7 @@ public final class DirectorBibleTest {
         T.eq("private plan survives save and load", bible.snapshot(), loaded.snapshot());
 
         DirectorBible succeeded = new DirectorBible();
-        succeeded.freeze(Scenario.byId("road"), "Find family.");
+        succeeded.freeze(Scenario.byId("conspiracy"), "Find family.");
         T.ok("unknown objective state is rejected",
                 !succeeded.transition("paused", "not a real state"));
         T.ok("blank transition evidence is rejected",
@@ -37,7 +37,7 @@ public final class DirectorBibleTest {
 
         for (String terminal : new String[] { "failed", "impossible" }) {
             DirectorBible candidate = new DirectorBible();
-            candidate.freeze(Scenario.byId("survival"), "Keep going.");
+            candidate.freeze(Scenario.byId("conspiracy"), "Keep going.");
             T.ok("active objective can become " + terminal,
                     candidate.transition(terminal, "Deterministic test evidence."));
         }
@@ -64,7 +64,7 @@ public final class DirectorBibleTest {
         T.eq("evidence survives save and load", evidence.snapshot(), roundTrip(evidence).snapshot());
 
         DirectorBible rerouted = new DirectorBible();
-        rerouted.freeze(Scenario.byId("road"), "Cross Knox County.");
+        rerouted.freeze(Scenario.byId("conspiracy"), "Cross Knox County.");
         String fixedTruth = rerouted.snapshot().truth();
         T.ok("impossible objective fails forward",
                 rerouted.failForward("The only vehicle was destroyed."));
@@ -73,9 +73,9 @@ public final class DirectorBibleTest {
                         && rerouted.statusJson().contains("\"previousObjectives\":1"));
         T.eq("fail-forward preserves fixed truth", fixedTruth, rerouted.snapshot().truth());
         T.ok("old-route evidence cannot complete replacement",
-                !rerouted.observe(20, StoryEvent.VEHICLE_ENTERED, "They entered a wreck."));
+                !rerouted.observe(20, StoryEvent.ITEM_ACQUIRED, "They acquired a newspaper."));
         T.ok("replacement evidence can complete replacement",
-                rerouted.observe(21, StoryEvent.PLACE_CHANGED, "They reached another place."));
+                rerouted.observe(21, StoryEvent.ITEM_ACQUIRED, "They acquired a radio."));
         T.ok("fail-forward history survives persistence",
                 roundTrip(rerouted).snapshot().equals(rerouted.snapshot()));
 
@@ -94,9 +94,9 @@ public final class DirectorBibleTest {
                 + "\"objectiveState\":\"active\",\"hiddenRevelations\":[\"private clue\"],"
                 + "\"revealedFacts\":[]}";
         DirectorBible migrated = new DirectorBible();
-        migrated.load(JsonParse.parse(legacy), Scenario.byId("road"));
+        migrated.load(JsonParse.parse(legacy), Scenario.byId("conspiracy"));
         T.ok("alpha 7 Director bible gains an evidence rule",
-                migrated.statusJson().contains("\"evidenceType\":\"vehicle_entered\"")
+                migrated.statusJson().contains("\"evidenceType\":\"item_acquired\"")
                         && migrated.statusJson().contains("\"evidenceRequired\":1"));
         T.eq("alpha 7 migration preserves fixed truth", "fixed truth",
                 migrated.snapshot().truth());

@@ -25,7 +25,7 @@ import zombie.ZomboidFileSystem;
  */
 public final class Campaign {
 
-    private static final int CURRENT_SCHEMA = 7;
+    private static final int CURRENT_SCHEMA = 9;
     private static final int MAX_CAMPAIGN_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LAST_STATE_CHARS = 1024 * 1024;
     private static final int MAX_PAGES_ON_DISK = 5000;
@@ -76,6 +76,12 @@ public final class Campaign {
     private static final WorldMemory MEMORY = new WorldMemory();
     private static final DirectorBible DIRECTOR = new DirectorBible();
     private static String MODE = "chronicler";
+    /** Accepted LM Studio conversation checkpoint. Never advances on rejection. */
+    private static String PROVIDER_SESSION_PROFILE = "";
+    private static String PROVIDER_SESSION_MODEL = "";
+    /** Narrator/protocol identity. A planner chain must never feed a prose writer. */
+    private static String PROVIDER_SESSION_SCOPE = "";
+    private static String PROVIDER_RESPONSE_ID = "";
 
     // The player note channel. Three types, three lifetimes - getting the
     // lifetime wrong is the whole failure mode, so they are stored apart
@@ -152,6 +158,10 @@ public final class Campaign {
         MEMORY.clear();
         DIRECTOR.clear();
         MODE = "chronicler";
+        PROVIDER_SESSION_PROFILE = "";
+        PROVIDER_SESSION_MODEL = "";
+        PROVIDER_SESSION_SCOPE = "";
+        PROVIDER_RESPONSE_ID = "";
         OPENING = "";
         SCENARIO = "";
         PREMISE = "";
@@ -227,6 +237,17 @@ public final class Campaign {
             if (nextMode.equals("chronicler") && nextDirector.frozen())
                 throw new IllegalStateException("chronicler campaign has a director bible");
             String nextPremise = field(m, "premise", 32000);
+            String nextSessionProfile = schema >= 8
+                    ? field(m, "providerSessionProfile", 64) : "";
+            String nextSessionModel = schema >= 8
+                    ? field(m, "providerSessionModel", 256) : "";
+            String nextSessionScope = schema >= 9
+                    ? field(m, "providerSessionScope", 128) : "";
+            String nextResponseId = schema >= 8
+                    ? field(m, "providerResponseId", 256) : "";
+            if (!nextResponseId.isEmpty() && !nextResponseId.startsWith("resp_")) {
+                throw new IllegalStateException("providerResponseId is malformed");
+            }
             String nextLastState = field(m, "lastState", MAX_LAST_STATE_CHARS);
             String nextObservedState = schema >= 2
                     ? field(m, "observedState", MAX_LAST_STATE_CHARS)
@@ -296,6 +317,10 @@ public final class Campaign {
             OPENING = nextOpening;
             SCENARIO = nextScenario;
             PREMISE = nextPremise;
+            PROVIDER_SESSION_PROFILE = nextSessionProfile;
+            PROVIDER_SESSION_MODEL = nextSessionModel;
+            PROVIDER_SESSION_SCOPE = nextSessionScope;
+            PROVIDER_RESPONSE_ID = nextResponseId;
             LAST_STATE = nextLastState;
             OBSERVED_STATE = nextObservedState;
             trimOldest(CANON, MAX_CANON);
@@ -360,6 +385,10 @@ public final class Campaign {
         MEMORY.clear();
         DIRECTOR.clear();
         MODE = "chronicler";
+        PROVIDER_SESSION_PROFILE = "";
+        PROVIDER_SESSION_MODEL = "";
+        PROVIDER_SESSION_SCOPE = "";
+        PROVIDER_RESPONSE_ID = "";
         TODO.clear();
         ACHIEVED.clear();
         DECLINED.clear();
@@ -444,6 +473,10 @@ public final class Campaign {
             j.put("mode", MODE);
             DIRECTOR.write(j);
             j.put("premise", PREMISE);
+            j.put("providerSessionProfile", PROVIDER_SESSION_PROFILE);
+            j.put("providerSessionModel", PROVIDER_SESSION_MODEL);
+            j.put("providerSessionScope", PROVIDER_SESSION_SCOPE);
+            j.put("providerResponseId", PROVIDER_RESPONSE_ID);
             j.put("lastState", LAST_STATE);
             j.put("observedState", OBSERVED_STATE);
             EVENTS.write(j);
@@ -672,15 +705,7 @@ public final class Campaign {
         String oldScenario = SCENARIO;
         List<String> oldTodo = new ArrayList<>(TODO);
         SCENARIO = id;
-
-        // Seed the list. An empty checklist on the first screen tells the
-        // player nothing about what kind of story they just chose, and waiting
-        // for the narrator to propose one item per page means the list is bare
-        // for the whole first session. These are not orders - they are the
-        // obvious opening wants of someone in THIS story, and the player owns
-        // every one of them: tick it, or strike it out and we learn something.
-        for (String s : sc.opening) addTodoInMemory(s, "story");
-        for (String s : Scenario.FIRST_DAYS) addTodoInMemory(s, "story");
+        for (String task : sc.opening) addTodoInMemory(task, "story");
 
         if (!save()) {
             SCENARIO = oldScenario;
@@ -688,7 +713,7 @@ public final class Campaign {
             return false;
         }
         Config.log("campaign: story kind set to " + id
-                + " (" + TODO.size() + " opening items)");
+                + " (" + sc.opening.length + " player-approved opening tasks)");
         return true;
     }
 
@@ -1118,11 +1143,48 @@ public final class Campaign {
         // The narrator proposes the same want on consecutive pages; that should
         // not stack up three identical lines.
         for (String row : TODO) {
-            if (textOf(row).equalsIgnoreCase(t)) return false;
+            String old = textOf(row);
+            if (old.equalsIgnoreCase(t) || sameTaskIntent(old, t)) {
+                Config.log("campaign: duplicate to-do refused - \"" + t
+                        + "\" overlaps \"" + old + "\"");
+                return false;
+            }
         }
         if (TODO.size() >= 40) return false;
         TODO.add(enc(OPEN, source == null ? "player" : source, t));
         return true;
+    }
+
+    /** Catches common paraphrases of the three opening survival intentions. */
+    private static boolean sameTaskIntent(String a, String b) {
+        String left = taskIntent(a), right = taskIntent(b);
+        return !left.isEmpty() && left.equals(right);
+    }
+
+    private static String taskIntent(String text) {
+        String s = text == null ? "" : text.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9 ]", " ");
+        if (hasAny(s, "zombie", "zombies", "dead", "undead")
+                && hasAny(s, "clear", "kill", "remove", "secure")) {
+            return "clear-dead";
+        }
+        if (hasAny(s, "safe", "secure", "shelter")
+                && hasAny(s, "house", "home", "place", "base", "room")) {
+            return "secure-shelter";
+        }
+        if (hasAny(s, "food", "meal", "provision", "supplies")
+                && hasAny(s, "gather", "find", "collect", "stock", "store")) {
+            return "gather-food";
+        }
+        return "";
+    }
+
+    private static boolean hasAny(String text, String... words) {
+        String padded = " " + text + " ";
+        for (String word : words) {
+            if (padded.contains(" " + word + " ")) return true;
+        }
+        return false;
     }
 
     /**
@@ -1161,6 +1223,27 @@ public final class Campaign {
             String state,
             int consumedDirections,
             List<Long> consumedEventIds) {
+        return commitGeneratedPage(expectedGeneration, premise, title, text, stamp,
+                canon, todo, state, consumedDirections, consumedEventIds,
+                null, null, null, null);
+    }
+
+    /** Stateful-provider overload: response id is persisted in the page transaction. */
+    public static synchronized boolean commitGeneratedPage(
+            long expectedGeneration,
+            String premise,
+            String title,
+            String text,
+            String stamp,
+            List<String> canon,
+            String todo,
+            String state,
+            int consumedDirections,
+            List<Long> consumedEventIds,
+            String sessionProfile,
+            String sessionModel,
+            String sessionScope,
+            String responseId) {
         if (GENERATION.get() != expectedGeneration) {
             Config.log("campaign: dropping completed page for stale generation "
                     + expectedGeneration + " (current " + GENERATION.get() + ")");
@@ -1201,6 +1284,10 @@ public final class Campaign {
         DirectorBible.Snapshot oldDirector = DIRECTOR.snapshot();
         String oldPremise = PREMISE;
         String oldLastState = LAST_STATE;
+        String oldSessionProfile = PROVIDER_SESSION_PROFILE;
+        String oldSessionModel = PROVIDER_SESSION_MODEL;
+        String oldSessionScope = PROVIDER_SESSION_SCOPE;
+        String oldResponseId = PROVIDER_RESPONSE_ID;
 
         if (!addPageInMemory(title, text, stamp)) return false;
         if (PREMISE.isEmpty() && premise != null && !premise.isBlank()) {
@@ -1229,6 +1316,20 @@ public final class Campaign {
             return false;
         }
         LAST_STATE = keptState;
+        if (responseId != null && responseId.startsWith("resp_")
+                && sessionProfile != null && sessionModel != null
+                && sessionScope != null && !sessionScope.isBlank()) {
+            PROVIDER_SESSION_PROFILE = sessionProfile;
+            PROVIDER_SESSION_MODEL = sessionModel;
+            PROVIDER_SESSION_SCOPE = sessionScope;
+            PROVIDER_RESPONSE_ID = responseId;
+        } else {
+            // A page written by another provider is absent from the old chain.
+            PROVIDER_SESSION_PROFILE = "";
+            PROVIDER_SESSION_MODEL = "";
+            PROVIDER_SESSION_SCOPE = "";
+            PROVIDER_RESPONSE_ID = "";
+        }
         boolean stored = save();
 
         if (!stored) {
@@ -1242,6 +1343,10 @@ public final class Campaign {
             DIRECTOR.restore(oldDirector);
             PREMISE = oldPremise;
             LAST_STATE = oldLastState;
+            PROVIDER_SESSION_PROFILE = oldSessionProfile;
+            PROVIDER_SESSION_MODEL = oldSessionModel;
+            PROVIDER_SESSION_SCOPE = oldSessionScope;
+            PROVIDER_RESPONSE_ID = oldResponseId;
             Config.log("campaign: generated page rolled back after save failure");
             return false;
         }
@@ -1251,6 +1356,59 @@ public final class Campaign {
                 + ", " + spent + " direction(s), " + narratedEvents
                 + " event(s) consumed)");
         return true;
+    }
+
+    /** Returns the accepted checkpoint only for the exact provider and narrator. */
+    public static synchronized String providerResponseId(
+            String profile, String model, String scope) {
+        load();
+        if (!PROVIDER_SESSION_PROFILE.equals(profile == null ? "" : profile)) return "";
+        if (!PROVIDER_SESSION_MODEL.equals(model == null ? "" : model)) return "";
+        if (!PROVIDER_SESSION_SCOPE.equals(scope == null ? "" : scope)) return "";
+        return PROVIDER_RESPONSE_ID;
+    }
+
+    /**
+     * Persists a hidden, narrator-scoped LM Studio checkpoint before page one.
+     *
+     * The seed is provider conversation state only.  It creates no page,
+     * premise, canon, task, event acknowledgement or continuity checkpoint.
+     * Once a page exists, only the page transaction may advance the provider
+     * response id.
+     */
+    public static synchronized boolean commitProviderSeed(
+            long expectedGeneration,
+            String profile,
+            String model,
+            String scope,
+            String responseId) {
+        if (GENERATION.get() != expectedGeneration) return false;
+        load();
+        if (!PAGES.isEmpty() || Scenario.byId(SCENARIO) == null) return false;
+        if (profile == null || profile.isBlank() || profile.length() > 64) return false;
+        if (model == null || model.isBlank() || model.length() > 256) return false;
+        if (scope == null || scope.isBlank() || scope.length() > 128) return false;
+        if (responseId == null || !responseId.startsWith("resp_")
+                || responseId.length() > 256) return false;
+
+        String oldProfile = PROVIDER_SESSION_PROFILE;
+        String oldModel = PROVIDER_SESSION_MODEL;
+        String oldScope = PROVIDER_SESSION_SCOPE;
+        String oldResponseId = PROVIDER_RESPONSE_ID;
+        PROVIDER_SESSION_PROFILE = profile;
+        PROVIDER_SESSION_MODEL = model;
+        PROVIDER_SESSION_SCOPE = scope;
+        PROVIDER_RESPONSE_ID = responseId;
+        if (save()) {
+            Config.log("campaign: narrator history checkpoint stored before page one ("
+                    + scope + ")");
+            return true;
+        }
+        PROVIDER_SESSION_PROFILE = oldProfile;
+        PROVIDER_SESSION_MODEL = oldModel;
+        PROVIDER_SESSION_SCOPE = oldScope;
+        PROVIDER_RESPONSE_ID = oldResponseId;
+        return false;
     }
 
     public static synchronized boolean toggleTodo(int oneBased) {

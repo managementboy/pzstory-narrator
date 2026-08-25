@@ -75,7 +75,7 @@ remain local; providers receive only human-readable labels and qualitative
 familiarity. Existing schema-1 campaigns migrate on their next successful
 write.
 
-This is `2.0.0-alpha.9`, an active 2.0 development build—not the completed 2.0
+This is `2.0.0-alpha.13`, an active 2.0 development build—not the completed 2.0
 feature set. It includes the event-aware campaign foundation, Campaign
 Director, and an experimental validated narrator. Character memory, the PDA
 timeline and opt-in world artifacts are tracked in
@@ -107,6 +107,7 @@ consuming material the constrained renderer cannot yet honour.
 | `anthropic` | Claude, with prompt caching |
 | `gemini` | Google AI Studio |
 | `openai-compatible` | OpenAI, OpenRouter, Ollama, LM Studio, and anything else speaking that API |
+| `lmstudio-stateful` | LM Studio native chat with a save-scoped response chain |
 
 Keys live in `Zomboid/pzstory/profiles.json`, which is **outside this repo and
 outside your save**. They are never logged, never written into a page, and
@@ -115,6 +116,14 @@ never sent anywhere except the provider you configured. See
 [`docs/API_KEY_ANTHROPIC.md`](docs/API_KEY_ANTHROPIC.md) for key setup.
 
 A local model through Ollama needs no key and no account.
+
+With `lmstudio-stateful`, selecting a story type before the first page silently
+seeds the narrator with a dated Knox Event chronology and the contemporary
+newspaper information environment. That private context lets later pages
+anticipate the shape of the collapse without spoiling future events, treating
+official claims as truth, or pretending the survivor read a paper. It creates
+no story page or campaign fact by itself, and the infection's origin remains
+deliberately unconfirmed.
 
 Before a classic-narrator request leaves the game, its live-state block is minimised: account
 name, exact coordinates, engine ids, diagnostic errors, raw health/stat
@@ -176,8 +185,8 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`2.0.0-alpha.9`) is for people and changes whenever anything ships. **Bridge
-API** (`12`) changes
+(`2.0.0-alpha.13`) is for people and changes whenever anything ships. **Bridge
+API** (`13`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer
 forces a firmware mismatch, and an incompatible pairing can no longer load.

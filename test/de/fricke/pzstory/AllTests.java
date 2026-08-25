@@ -6,9 +6,13 @@ public final class AllTests {
         System.out.println("PZStory test suite");
         JsonParseTest.run();
         PageResultTest.run();
+        GroundingGuardTest.run();
         NarrativeStateTest.run();
+        NarratorHistoryTest.run();
+        LmStudioCatalogTest.run();
         ValidatedNarratorTest.run();
         PromptFreshStartTest.run();
+        StateReaderOptionTest.run();
         DeltaTest.run();
         ActionEventPolicyTest.run();
         FactMemoryTest.run();
@@ -21,6 +25,7 @@ public final class AllTests {
         TestLabDiagnosticsTest.run();
         CampaignEventTest.run();
         CampaignTest.run();
+        StatefulSessionTest.run();
         FileSafetyTest.run();
         EndpointTest.run();
         ProviderCompatibilityTest.run();

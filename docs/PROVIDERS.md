@@ -51,6 +51,16 @@ your accounts or local server:
       "maxRequestBytes": 500000,
       "systemMode": "prepend_to_user",
       "streamUsage": false
+    },
+    "lm-studio-stateful": {
+      "kind": "lmstudio-stateful",
+      "model": "pzstory-qwen2.5-3b",
+      "apiKey": "",
+      "baseUrl": "http://127.0.0.1:1234",
+      "maxTokens": 1800,
+      "maxInputChars": 48000,
+      "maxRequestBytes": 500000,
+      "systemMode": "native"
     }
   }
 }
@@ -64,10 +74,10 @@ the device and in `console.txt`.
 
 | Field | Meaning | Default / allowed values |
 |---|---|---|
-| `kind` | Request and streaming protocol | `anthropic`, `gemini`, `openai-compatible` |
+| `kind` | Request and streaming protocol | `anthropic`, `gemini`, `openai-compatible`, `lmstudio-stateful` |
 | `model` | Provider model id | Required; copy it exactly from the provider/server |
 | `apiKey` | Credential sent only to that profile's endpoint | Required for Anthropic/Gemini; may be empty for loopback |
-| `baseUrl` | API root, without `/chat/completions` | Required for OpenAI-compatible; optional Gemini override |
+| `baseUrl` | API root, without the final request path | Required for OpenAI-compatible and LM Studio stateful; optional Gemini override |
 | `maxTokens` | Visible-output ceiling | 256–32,000; 2,000 by default |
 | `maxInputChars` | System + history + current-turn character ceiling | 24,000–1,000,000; 300,000 by default |
 | `maxRequestBytes` | Final UTF-8 JSON request-body ceiling | 131,072–2,000,000; 1,000,000 by default |
@@ -80,6 +90,36 @@ the device and in `console.txt`.
 `maxInputChars` is checked before encoding and `maxRequestBytes` afterwards.
 Both limits matter: non-ASCII text and JSON escaping can make the request body
 larger than its source prompt.
+
+## Stateful LM Studio
+
+`lmstudio-stateful` uses LM Studio's native `/api/v1/chat` endpoint. The first
+turn is an invisible, pre-page Knox Event chronology seed started after the
+player chooses a story type. It gives the narrator dated dramatic context but
+creates no page, canon, task, premise, or survivor memory. The first accepted
+page branches from that private setup turn; later requests send the new live
+turn with `previous_response_id` instead of repeating the fixed charter,
+chronology, and archive. PZStory stores that id inside the save and scopes it to
+the exact profile, model, and narrator protocol. Classic prose can therefore
+never continue from Safe mode's constrained planner conversation. Changing
+narrator mode before page one starts a separate seeded chain for that mode.
+
+The chronology is date-gated. Future events are available to the narrator for
+dramatic restraint but are forbidden as present facts before their game day,
+and narrator knowledge is never automatically survivor knowledge. The
+infection's origin remains unconfirmed.
+
+The candidate id is committed in the same disk transaction as the validated
+page. STOP, malformed output, a changed save, or a failed campaign write never
+advances the conversation checkpoint. Writing a page with another provider
+clears the old checkpoint because that page is absent from its conversation.
+If a Classic reply is structurally malformed, PZStory permits one corrective
+turn chained from that rejected draft. Only the corrected response id is
+committed, and only if the corrected page validates and saves atomically.
+
+LM Studio still has a finite model context. Stateful transport removes repeated
+request payloads and preserves conversational continuity; it does not make the
+context infinite or replace PZStory's authoritative campaign store.
 
 `thinkingTokens` is never silently added. Some Anthropic models require a
 minimum reasoning budget when thinking is enabled; use a provider-supported

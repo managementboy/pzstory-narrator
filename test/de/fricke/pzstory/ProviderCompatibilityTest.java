@@ -17,6 +17,21 @@ public final class ProviderCompatibilityTest {
                 "max_tokens", defaults.openAiTokenField);
         T.eq("reasoning is off by default", 0, defaults.thinkingTokens);
 
+        Config.Profile lmStudio = profile("lmstudio-stateful", Map.of(
+                "baseUrl", "http://127.0.0.1:1234", "apiKey", ""));
+        T.ok("LM Studio stateful profile is usable without a key", lmStudio.usable());
+        Map<String, Object> freshLm = lmStudioBody(lmStudio, "");
+        T.eq("fresh LM Studio turn carries system prompt", "system",
+                JsonParse.str(freshLm, "system_prompt", ""));
+        T.ok("fresh LM Studio turn stores a response", Boolean.TRUE.equals(freshLm.get("store")));
+        Map<String, Object> continuedLm = lmStudioBody(lmStudio, "resp_previous");
+        T.eq("continued LM Studio turn references accepted checkpoint", "resp_previous",
+                JsonParse.str(continuedLm, "previous_response_id", ""));
+        T.ok("continued LM Studio turn does not repeat system prompt",
+                !continuedLm.containsKey("system_prompt"));
+        T.eq("continued LM Studio turn sends only volatile tail", "tail",
+                JsonParse.str(continuedLm, "input", ""));
+
         Map<String, Object> newerValues = new LinkedHashMap<>();
         newerValues.put("baseUrl", "https://api.example.test/v1");
         newerValues.put("streamUsage", true);
@@ -72,6 +87,13 @@ public final class ProviderCompatibilityTest {
         Llm.CompletionResult failure = Llm.CompletionResult.failure("invalid", "bad");
         T.eq("failed completion cannot expose replacement", null,
                 failure.replacement);
+        Llm.CompletionResult retry = Llm.CompletionResult.retry(
+                "repair-system", "repair-history", "repair-tail");
+        T.eq("corrective completion carries its tail", "repair-tail", retry.retryTail);
+        T.eq("corrective completion cannot expose rejected prose", null,
+                retry.replacement);
+        T.ok("classic and safe sessions are isolated",
+                !Llm.SCOPE_CLASSIC.equals(Llm.SCOPE_SAFE));
         T.throwsWith("buffered requests require a validator", "completion hook", () ->
                 Llm.startBuffered("system", "", "user", null));
     }
@@ -92,6 +114,21 @@ public final class ProviderCompatibilityTest {
                     Config.Profile.class, String.class, String.class, String.class);
             builder.setAccessible(true);
             String json = (String) builder.invoke(null, profile, "system", "history", "tail");
+            return JsonParse.parseObject(json);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static Map<String, Object> lmStudioBody(
+            Config.Profile profile, String previousResponseId) {
+        try {
+            Method builder = Llm.class.getDeclaredMethod("lmStudioBody",
+                    Config.Profile.class, String.class, String.class,
+                    String.class, String.class);
+            builder.setAccessible(true);
+            String json = (String) builder.invoke(null, profile,
+                    "system", "history", "tail", previousResponseId);
             return JsonParse.parseObject(json);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);

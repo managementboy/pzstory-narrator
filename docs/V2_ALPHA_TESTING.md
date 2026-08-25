@@ -6,7 +6,7 @@ state sample. Use a copied save. Keep an untouched copy of the save and its
 
 ## Build and install
 
-The source release is `2.0.0-alpha.9` and bridge API is `12`. The tracked JAR
+The source release is `2.0.0-alpha.13` and bridge API is `13`. The tracked JAR
 must be rebuilt from the exact checkout whenever production Java changes.
 
 ```sh
@@ -57,6 +57,45 @@ directory and restart the game; loading another save does not reload Java.
    contacting the provider, and the direction/event batch must remain pending.
 6. Switch back to `classic`. Existing pages stay unchanged and the next page
    uses the normal streaming narrator again.
+
+## Pre-page Knox history seed
+
+With an `lmstudio-stateful` profile selected, choosing a story type before page
+one starts one invisible setup turn. The device should briefly report that the
+narrator is learning the Knox history and then say that history is ready. The
+turn gives the narrator a dated, narrator-only chronology paraphrased from
+[Forzei's Knox Event guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3490625605)
+and a public-information layer paraphrased from
+[Polaris's Build 42 newspaper collection](https://steamcommunity.com/sharedfiles/filedetails/?id=3389064477)
+before the first WRITE. It must not create an archive page, premise, canon
+entry, task, or survivor memory. Newspaper claims remain dated, fallible, and
+unknown to the survivor until play or established story evidence gives access.
+The same boundary applies to broadcasts, annotated maps, environmental scenes,
+VHS tapes and CDs: a page may use only the fragment the survivor could actually
+perceive, not generic lore associated with that kind of object.
+
+1. Start a fresh copied campaign, select a story type, and wait for `history
+   ready; press WRITE`. If the first WRITE says the narrator is still learning,
+   wait briefly and press it again.
+2. Open the live trace. Before the first prose request it should contain a
+   `PRIVATE CHRONOLOGY` request, the exact acknowledgement
+   `HISTORY_READY_V2`, and `NARRATOR HISTORY SEEDED BEFORE PAGE ONE`.
+3. Confirm the archive still contains zero pages. The chronology is private
+   provider context, not an automatically written opening.
+4. Write the first page on default day 0. It may use the July 9 cordon and
+   public uncertainty, but it must not reveal the later Louisville breach,
+   airborne route, bridge demolition, worldwide spread, or final broadcasts as
+   events that have already happened.
+5. Confirm a visible zombie affects the atmosphere without making the survivor
+   know the infection's cause. The source deliberately leaves the origin
+   unconfirmed.
+6. Change narrator mode before page one. Each narrator protocol must establish
+   its own history-aware conversation; Classic prose must never continue from
+   Safe planner state or vice versa.
+7. Put an unread annotated map, VHS tape or CD in inventory, or stand beside a
+   silent television or radio. The page must not invent its contents. A player
+   note or captured action that establishes reading, watching or listening may
+   then make that specific fragment available.
 
 ## Inspect local data
 
