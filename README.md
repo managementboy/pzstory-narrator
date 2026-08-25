@@ -215,6 +215,11 @@ The stable base remains `2.0.0`; this branch is the `2.1.0` feature line.
 
 ## Layout
 
+The local development workspace keeps Core and Voice as independent sibling
+repositories and keeps combined build/deployment orchestration outside both.
+See [`docs/WORKSPACE_LAYOUT.md`](docs/WORKSPACE_LAYOUT.md) for the exact
+arrangement and ownership boundaries.
+
 ```
 src/          Java source — the state reader, the prompt, the model client
 mod/42/       The mod as players install it (Lua + the built jar)
