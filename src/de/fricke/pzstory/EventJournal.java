@@ -23,10 +23,12 @@ final class EventJournal {
     static final class Capture {
         final String text;
         final List<Long> ids;
+        final List<StoryEvent> events;
 
-        Capture(String text, List<Long> ids) {
+        Capture(String text, List<Long> ids, List<StoryEvent> events) {
             this.text = text;
             this.ids = List.copyOf(ids);
+            this.events = List.copyOf(events);
         }
     }
 
@@ -123,7 +125,7 @@ final class EventJournal {
         for (StoryEvent event : events) {
             if (event.narratedPage == 0) pending.add(event);
         }
-        if (pending.isEmpty()) return new Capture("", List.of());
+        if (pending.isEmpty()) return new Capture("", List.of(), List.of());
 
         // Importance chooses the material; chronological order tells it.
         pending.sort(Comparator
@@ -137,6 +139,7 @@ final class EventJournal {
 
         StringBuilder body = new StringBuilder(2048);
         List<Long> ids = new ArrayList<>();
+        List<StoryEvent> captured = new ArrayList<>();
         int highest = 0;
         for (StoryEvent event : pending) {
             String line = "- [" + weight(event.importance) + "] "
@@ -144,9 +147,10 @@ final class EventJournal {
             if (body.length() + line.length() > MAX_PROMPT_CHARS) break;
             body.append(line);
             ids.add(event.id);
+            captured.add(event);
             highest = Math.max(highest, event.importance);
         }
-        if (ids.isEmpty()) return new Capture("", List.of());
+        if (ids.isEmpty()) return new Capture("", List.of(), List.of());
 
         StringBuilder out = new StringBuilder(body.length() + 700);
         out.append("### RECORDED EVENTS SINCE THEIR LAST WRITTEN PAGE\n");
@@ -161,7 +165,7 @@ final class EventJournal {
             out.append("Something decisive happened. Do not bury it beneath room "
                     + "description or routine inventory.\n\n");
         }
-        return new Capture(out.toString(), ids);
+        return new Capture(out.toString(), ids, captured);
     }
 
     int markNarrated(List<Long> capturedIds, int page) {

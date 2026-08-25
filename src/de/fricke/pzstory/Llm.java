@@ -51,17 +51,29 @@ public final class Llm {
     public static final class CompletionResult {
         public final String kind;
         public final String message;
+        public final String replacement;
 
-        private CompletionResult(String kind, String message) {
+        private CompletionResult(String kind, String message, String replacement) {
             this.kind = kind;
             this.message = message;
+            this.replacement = replacement;
         }
 
         public static CompletionResult failure(String kind, String message) {
             return new CompletionResult(
                     kind == null || kind.isBlank() ? "postprocess" : kind,
                     message == null || message.isBlank()
-                            ? "the completed page could not be kept" : message);
+                            ? "the completed page could not be kept" : message,
+                    null);
+        }
+
+        /** Replaces hidden planner output with validated player-facing text. */
+        public static CompletionResult success(String replacement) {
+            if (replacement == null || replacement.isBlank()) {
+                return failure("postprocess",
+                        "the completed page renderer returned nothing");
+            }
+            return new CompletionResult(null, null, replacement);
         }
     }
 
@@ -112,8 +124,14 @@ public final class Llm {
         volatile java.io.Closeable body;
         /** Guards run-at-most-once for the success callback. */
         final AtomicBoolean callbackRan = new AtomicBoolean(false);
+        /** Planner bytes stay hidden until the callback installs safe prose. */
+        final boolean bufferedOutput;
 
-        Req(long id, long generation) { this.id = id; this.generation = generation; }
+        Req(long id, long generation, boolean bufferedOutput) {
+            this.id = id;
+            this.generation = generation;
+            this.bufferedOutput = bufferedOutput;
+        }
 
         boolean isTerminal() {
             Status st = status[0];
@@ -189,6 +207,23 @@ public final class Llm {
      */
     public static String start(String system, String cached, String tail,
                                Completion onDone) {
+        return start(system, cached, tail, onDone, false);
+    }
+
+    /**
+     * Runs a request without exposing its stream. On success the completion
+     * hook must return {@link CompletionResult#success(String)}; only that
+     * replacement becomes visible to Lua. Used by validated planner modes.
+     */
+    public static String startBuffered(String system, String cached, String tail,
+                                       Completion onDone) {
+        if (onDone == null) throw new IllegalArgumentException(
+                "a buffered request requires a completion hook");
+        return start(system, cached, tail, onDone, true);
+    }
+
+    private static String start(String system, String cached, String tail,
+                                Completion onDone, boolean bufferedOutput) {
         final String user = tail;
         final String prefix = cached;
         final Req req;
@@ -213,7 +248,7 @@ public final class Llm {
                         + "; reduce history or raise maxInputChars deliberately";
             }
 
-            req = new Req(SEQ.incrementAndGet(), Campaign.generation());
+            req = new Req(SEQ.incrementAndGet(), Campaign.generation(), bufferedOutput);
             active = req;
             workerBusy = true;
         }
@@ -272,10 +307,20 @@ public final class Llm {
                     result = CompletionResult.failure("postprocess",
                             "the completed page could not be validated or saved");
                 }
+                if (result == null && req.bufferedOutput) {
+                    result = CompletionResult.failure("postprocess",
+                            "the buffered planner did not install a validated page");
+                }
                 boolean recordedFailure = false;
                 synchronized (LOCK) {
                     if (active != req || req.status[0] != Status.COMMITTING) return;
                     if (result == null) {
+                        req.status[0] = Status.DONE;
+                    } else if (result.replacement != null) {
+                        req.full.setLength(0);
+                        req.full.append(result.replacement);
+                        req.pending.setLength(0);
+                        req.pending.append(result.replacement);
                         req.status[0] = Status.DONE;
                     } else {
                         req.failKind = result.kind;
@@ -363,11 +408,13 @@ public final class Llm {
                 j.put("done", true);
                 return j.endObj().toString();
             }
-            String delta = r.pending.toString();
+            boolean hidden = r.bufferedOutput && r.status[0] != Status.DONE;
+            String delta = hidden ? "" : r.pending.toString();
             r.pending.setLength(0);
             j.put("status", r.status[0].name());
             j.put("delta", delta);
-            j.put("chars", r.full.length());
+            j.put("chars", hidden ? 0 : r.full.length());
+            if (r.bufferedOutput) j.put("buffered", true);
             j.put("done", r.isTerminal());
             if (r.error != null) j.put("error", r.error);
             if (r.failKind != null) j.put("failKind", r.failKind);
@@ -383,7 +430,11 @@ public final class Llm {
     }
 
     public static String text() {
-        synchronized (LOCK) { return active == null ? "" : active.full.toString(); }
+        synchronized (LOCK) {
+            if (active == null) return "";
+            if (active.bufferedOutput && active.status[0] != Status.DONE) return "";
+            return active.full.toString();
+        }
     }
 
     /** The current failure reason, or "". Typed accessor for the Lua bridge. */

@@ -65,6 +65,12 @@ reveals, a privacy-safe Testing Mode panel, and non-destructive Director Test
 Lab scenarios. Real destination-registry validation and campaign balancing
 remain.
 
+`2.0.0-alpha.9` adds the opt-in validated narrator foundation. A local or
+hosted model selects only typed fact IDs and controlled enums; Java owns the
+final page, hides planner output, and falls back deterministically when the
+plan is malformed. The classic narrator remains the default while real
+campaign testing measures voice, continuity and repetition.
+
 - Add an opt-in Director mode beside the current Chronicler mode.
 - Generate and freeze a private campaign bible at the first-page transaction.
 - Store a fixed truth, cast, settlement route, clues, revelations, acts and

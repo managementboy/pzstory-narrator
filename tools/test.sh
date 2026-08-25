@@ -38,6 +38,7 @@ src/de/fricke/pzstory/Campaign.java \
 src/de/fricke/pzstory/Config.java \
 src/de/fricke/pzstory/ContinuityMemory.java \
 src/de/fricke/pzstory/Delta.java \
+src/de/fricke/pzstory/DirectorBible.java \
 src/de/fricke/pzstory/EventDetector.java \
 src/de/fricke/pzstory/EventJournal.java \
 src/de/fricke/pzstory/FactMemory.java \
@@ -55,6 +56,8 @@ src/de/fricke/pzstory/StoryEvent.java \
 src/de/fricke/pzstory/StoryFact.java \
 src/de/fricke/pzstory/ThreadMemory.java \
 src/de/fricke/pzstory/Settings.java \
+src/de/fricke/pzstory/TestLabDiagnostics.java \
+src/de/fricke/pzstory/ValidatedNarrator.java \
 src/de/fricke/pzstory/Version.java \
 src/de/fricke/pzstory/WorldMemory.java"
 

@@ -289,12 +289,67 @@ public class StoryAPI {
                 + Delta.between(Campaign.lastState(), state)
                 + Campaign.repetitionGuidance();
 
+        final boolean firstPage = Campaign.pageCount() == 0;
+        final int targetWords = Settings.words();
+        final String stateNow = state;
+
+        if (Settings.NARRATOR_VALIDATED.equals(Settings.narratorMode())) {
+            if ("director".equals(Campaign.mode())) {
+                return "safe experimental narrator currently supports chronicler mode only";
+            }
+            if (capturedNotes.directionCount > 0
+                    || (notes != null && !notes.isBlank())) {
+                return "safe experimental narrator cannot consume notebook directions yet; "
+                        + "switch to classic for this page";
+            }
+            final ValidatedNarrator.Session session;
+            try {
+                long seed = ((long) pageStamp.hashCode() << 32)
+                        ^ Integer.toUnsignedLong(state.hashCode());
+                session = ValidatedNarrator.prepare(
+                        narrativeState, capturedEvents.events, change,
+                        firstPage, targetWords, seed, voice);
+            } catch (Throwable t) {
+                return "could not prepare the validated narrator: "
+                        + t.getClass().getSimpleName();
+            }
+            String err = Llm.startBuffered(
+                    session.systemPrompt(), "", session.userPrompt(),
+                    (generation, plannerReply) -> {
+                        final String rendered;
+                        final PageResult result;
+                        try {
+                            rendered = session.render(plannerReply);
+                            result = PageResult.parse(rendered, firstPage, targetWords);
+                        } catch (Throwable invalid) {
+                            return Llm.CompletionResult.failure("invalid_output",
+                                    "the validated page could not be rendered: "
+                                            + invalid.getMessage());
+                        }
+                        boolean stored = Campaign.commitGeneratedPage(
+                                generation,
+                                result.premise,
+                                result.title,
+                                result.page,
+                                pageStamp,
+                                result.canon,
+                                result.todo,
+                                stateNow,
+                                capturedNotes.directionCount,
+                                capturedEvents.ids);
+                        return stored ? Llm.CompletionResult.success(rendered)
+                                : Llm.CompletionResult.failure("save",
+                                        "the page was valid but the campaign file could not "
+                                                + "be saved; the old campaign is unchanged");
+                    });
+            if (err != null) Config.log("requestStoryPage refused: " + err);
+            return err;
+        }
+
         String systemPrompt = Prompt.CHARTER + "\n\n" + Prompt.tone() + "\n\n"
                 + World.RULES + "\n\n" + World.KNOX
                 + "\n\n" + StateReader.sandbox() + "\n\n"
                 + Campaign.fixedSpine();
-        final boolean firstPage = Campaign.pageCount() == 0;
-        final int targetWords = Settings.words();
         String tailPrompt = Prompt.userTurn(
                 narrativeState, voice, change, firstPage,
                 Delta.stillStanding(Campaign.lastState(), state));
@@ -317,7 +372,6 @@ public class StoryAPI {
                 inputLimit - systemPrompt.length() - tailPrompt.length());
         String history = historyBudget == 0 ? "" : Campaign.history(historyBudget);
 
-        final String stateNow = state;
         String err = Llm.start(
                 systemPrompt,
                 history,                              // cached prefix
@@ -545,6 +599,9 @@ public class StoryAPI {
     public static void setPause(boolean b)     { Settings.setPause(b); }
     public static void setNudge(int n)         { Settings.setNudge(n); }
     public static void setDoom(int d)          { Settings.setDoom(d); }
+    public static void setNarratorMode(String mode) {
+        Settings.setNarratorMode(mode);
+    }
     public static void setZoom(int z)          { Settings.setZoom(z); }
     public static int  getZoom()               { return Settings.zoom(); }
     public static boolean pauseOnOpen()        { return Settings.pause(); }

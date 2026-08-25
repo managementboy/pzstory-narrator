@@ -48,6 +48,9 @@ public final class Settings {
     public static final int DOOM_AMBIGUOUS = 2;
     public static final int DOOM_INEVITABLE = 3;
 
+    public static final String NARRATOR_CLASSIC = "classic";
+    public static final String NARRATOR_VALIDATED = "validated";
+
     private static int zoom = 0;                // 0 = pick from screen height
     private static int knowledge = KNOW_MEMORY;
     private static int words = 200;
@@ -55,6 +58,7 @@ public final class Settings {
     private static String profile = "";
     private static int nudge = 2;   // 1 none, 2 a hint, 3 plainly
     private static int doom = DOOM_INEVITABLE;
+    private static String narratorMode = NARRATOR_CLASSIC;
     private static boolean loaded = false;
 
     private Settings() {}
@@ -81,6 +85,8 @@ public final class Settings {
             int nextNudge = Math.max(1, Math.min(3, JsonParse.num(m, "nudge", 2)));
             int nextDoom = Math.max(1, Math.min(3,
                     JsonParse.num(m, "doom", DOOM_INEVITABLE)));
+            String nextNarratorMode = narratorMode(
+                    JsonParse.str(m, "narratorMode", NARRATOR_CLASSIC));
             if (nextProfile.length() > 64) {
                 throw new IllegalArgumentException("profile name is longer than 64 characters");
             }
@@ -92,6 +98,7 @@ public final class Settings {
             profile = nextProfile;
             nudge = nextNudge;
             doom = nextDoom;
+            narratorMode = nextNarratorMode;
             loaded = true;
             Config.log("settings: knowledge=" + KNOW_LABELS[knowledge]
                     + " words=" + words + " pause=" + pauseOnOpen + " zoom=" + zoom);
@@ -111,6 +118,7 @@ public final class Settings {
             j.put("profile", profile);
             j.put("nudge", nudge);
             j.put("doom", doom);
+            j.put("narratorMode", narratorMode);
             j.endObj();
             AtomicFiles.writeUtf8(file(), j.toString());
         } catch (Throwable t) {
@@ -122,10 +130,16 @@ public final class Settings {
         return k < KNOW_CARRIED ? KNOW_CARRIED : (k > KNOW_MEMORY ? KNOW_MEMORY : k);
     }
 
+    private static String narratorMode(String value) {
+        return NARRATOR_VALIDATED.equals(value)
+                ? NARRATOR_VALIDATED : NARRATOR_CLASSIC;
+    }
+
     public static synchronized int zoom()        { load(); return zoom; }
     public static synchronized int knowledge()   { load(); return knowledge; }
     public static synchronized int words()       { load(); return words; }
     public static synchronized boolean pause()   { load(); return pauseOnOpen; }
+    public static synchronized String narratorMode() { load(); return narratorMode; }
 
     public static synchronized void setZoom(int z) {
         load();
@@ -165,6 +179,10 @@ public final class Settings {
         load(); doom = Math.max(1, Math.min(3, d)); save();
     }
 
+    public static synchronized void setNarratorMode(String mode) {
+        load(); narratorMode = narratorMode(mode); save();
+    }
+
     public static synchronized void setPause(boolean b) {
         load(); pauseOnOpen = b; save();
     }
@@ -180,6 +198,7 @@ public final class Settings {
         j.put("pause", pauseOnOpen);
         j.put("nudge", nudge);
         j.put("doom", doom);
+        j.put("narratorMode", narratorMode);
         Config.Profile p = Config.active();
         j.put("profile", p == null ? "none" : p.name);
         j.put("model", p == null ? "" : p.model);

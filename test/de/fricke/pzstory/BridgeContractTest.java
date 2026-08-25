@@ -133,6 +133,20 @@ public final class BridgeContractTest {
         T.ok("Gemini thought summaries cannot enter page text",
                 llm.contains("pm.get(\"thought\")")
                         && llm.contains("j.put(\"includeThoughts\", false)"));
+        T.ok("validated planner output is buffered and replaced",
+                llm.contains("startBuffered(")
+                        && llm.contains("result.replacement")
+                        && llm.contains("result == null && req.bufferedOutput")
+                        && api.contains("ValidatedNarrator.prepare(")
+                        && api.contains("CompletionResult.success(rendered)"));
+        T.ok("experimental narrator is an explicit setup choice",
+                api.contains("setNarratorMode(String mode)")
+                        && lua.contains("safe (experimental)")
+                        && lua.contains("data.buffered == true"));
+        T.ok("unsupported safe-mode inputs are preserved, not consumed",
+                api.contains("safe experimental narrator currently supports chronicler")
+                        && api.contains("capturedNotes.directionCount > 0")
+                        && api.contains("cannot consume notebook directions yet"));
 
         T.group("Testing Mode - local diagnostics overlay");
         T.ok("F8 toggles Testing Mode",
@@ -211,7 +225,8 @@ public final class BridgeContractTest {
 
     private static String read(String path) {
         try {
-            return Files.readString(Path.of(path), StandardCharsets.UTF_8);
+            return Files.readString(Path.of(path), StandardCharsets.UTF_8)
+                    .replace("\r\n", "\n").replace('\r', '\n');
         } catch (Exception e) {
             return "";
         }

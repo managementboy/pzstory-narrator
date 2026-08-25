@@ -75,11 +75,23 @@ remain local; providers receive only human-readable labels and qualitative
 familiarity. Existing schema-1 campaigns migrate on their next successful
 write.
 
-This is `2.0.0-alpha.6`, the automated-testing milestone—not the completed 2.0
-feature set. Campaign Director mode, grounded objectives, character memory,
-the PDA timeline and opt-in world artifacts are tracked in
+This is `2.0.0-alpha.9`, an active 2.0 development build—not the completed 2.0
+feature set. It includes the event-aware campaign foundation, Campaign
+Director, and an experimental validated narrator. Character memory, the PDA
+timeline and opt-in world artifacts are tracked in
 [`docs/V2_ROADMAP.md`](docs/V2_ROADMAP.md). Use a copied save and follow
 [`docs/V2_ALPHA_TESTING.md`](docs/V2_ALPHA_TESTING.md).
+
+The SETUP screen keeps the existing **classic** narrator as the default. The
+opt-in **safe (experimental)** narrator asks the model only to select opaque
+local fact IDs and controlled mood/title/task choices. Java validates that
+small plan and writes the final page from state-backed phrases. Planner JSON
+is buffered and never appears in the book; malformed plans use a deterministic
+fallback. This mode is deliberately more constrained and less individual than
+the classic narrator while its in-game voice and continuity are evaluated. In
+this first production slice it supports Chronicler pages without pending
+notebook directions; the device refuses those combinations instead of silently
+consuming material the constrained renderer cannot yet honour.
 
 ## Requirements
 
@@ -104,13 +116,15 @@ never sent anywhere except the provider you configured. See
 
 A local model through Ollama needs no key and no account.
 
-Before a request leaves the game, its live-state block is minimised: account
+Before a classic-narrator request leaves the game, its live-state block is minimised: account
 name, exact coordinates, engine ids, diagnostic errors, raw health/stat
 telemetry and exact skill XP are removed. Narrative facts such as pronouns,
 room name, visible objects, injuries and broad ability remain. Campaign pages,
 canon, player notes, sandbox rules and the narrator prompt are still sent
-because they are necessary to continue the story. A local provider keeps all
-of that on the same machine.
+because they are necessary to continue the story. The experimental validated
+mode instead sends a bounded fact catalog and planner context, and accepts no
+provider-written prose. A local provider keeps either request on the same
+machine.
 
 ## Install
 
@@ -162,8 +176,8 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`2.0.0-alpha.6`) is for people and changes whenever anything ships. **Bridge
-API** (`5`) changes
+(`2.0.0-alpha.9`) is for people and changes whenever anything ships. **Bridge
+API** (`12`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer
 forces a firmware mismatch, and an incompatible pairing can no longer load.

@@ -62,6 +62,8 @@ public final class EventJournalTest {
         EventJournal.Capture capture = journal.capture();
         T.ok("pending events enter the prompt", !capture.ids.isEmpty()
                 && capture.text.contains("RECORDED EVENTS"));
+        T.eq("typed capture matches the acknowledged id batch",
+                capture.ids, capture.events.stream().map(e -> e.id).toList());
         T.ok("provider text omits stable room id",
                 !capture.text.contains("room:second-room-engine-id"));
         int capturedCount = capture.ids.size();

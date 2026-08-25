@@ -63,6 +63,17 @@ public final class ProviderCompatibilityTest {
         T.ok("display errors redact key-shaped strings", !display.contains(secret));
         T.ok("display errors obey the exact limit", display.length() <= 800);
         T.ok("truncated display errors say so", display.endsWith("...[truncated]"));
+
+        T.group("Buffered planner output - explicit safe replacement");
+        Llm.CompletionResult success = Llm.CompletionResult.success("safe page");
+        T.eq("successful completion carries replacement", "safe page",
+                success.replacement);
+        T.eq("successful completion has no failure kind", null, success.kind);
+        Llm.CompletionResult failure = Llm.CompletionResult.failure("invalid", "bad");
+        T.eq("failed completion cannot expose replacement", null,
+                failure.replacement);
+        T.throwsWith("buffered requests require a validator", "completion hook", () ->
+                Llm.startBuffered("system", "", "user", null));
     }
 
     private static Config.Profile profile(String kind, Map<String, Object> extra) {

@@ -6,9 +6,8 @@ state sample. Use a copied save. Keep an untouched copy of the save and its
 
 ## Build and install
 
-The source release is `2.0.0-alpha.5` and bridge API is `8`. The tracked JAR on
-the development branch is not usable until it has been rebuilt from this exact
-checkout.
+The source release is `2.0.0-alpha.9` and bridge API is `12`. The tracked JAR
+must be rebuilt from the exact checkout whenever production Java changes.
 
 ```sh
 git switch version-2.0-development
@@ -24,7 +23,7 @@ directory and restart the game; loading another save does not reload Java.
 
 1. Open a copied schema-1 campaign. Confirm all old pages, canon, notes and
    tasks remain. Make one harmless task edit, exit and confirm `campaign.json`
-   now says `"schema":2`.
+   now says `"schema":7`.
 2. Play for several minutes without opening the PDA. Kill one zombie, change
    rooms, enter a vehicle or sustain a wound, then press WRITE. The page should
    centre the most important event rather than merely describe the current
@@ -42,6 +41,22 @@ directory and restart the game; loading another save does not reload Java.
 8. Acquire an item, craft something, repair an item, eat or drink, tend a crop,
    light a fire, and open then close a door. Testing Mode should show each
    completed action. Cancelled timed actions must not appear.
+
+## Experimental validated narrator checks
+
+1. In a Chronicler campaign with no pending notebook direction, open SETUP and
+   change `narrator` from `classic` to `safe (experimental)`.
+2. Press WRITE with Qwen 2.5 3B selected. While it runs, the device should say
+   `planning safely`; planner JSON must never appear on the page.
+3. Test a visible threat, a wound, a vehicle, failed utilities, and items inside
+   two carried bags. Every concrete claim must be present in the live state or
+   the captured event journal.
+4. Repeat several pages from an unchanged location. Record repeated titles,
+   sentences, TODOs, and any page rejected for repetition.
+5. Queue a notebook direction or select Director mode. WRITE must refuse before
+   contacting the provider, and the direction/event batch must remain pending.
+6. Switch back to `classic`. Existing pages stay unchanged and the next page
+   uses the normal streaming narrator again.
 
 ## Inspect local data
 

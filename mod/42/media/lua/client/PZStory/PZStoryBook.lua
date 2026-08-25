@@ -94,7 +94,7 @@ local BRAND = "Premium Tech."
 --
 -- Bump this only when the Java surface this file calls actually changes, and
 -- bump Version.API in Java to match. build.sh refuses to build if they differ.
-local NEEDS_API = "11"
+local NEEDS_API = "12"
 
 -- The three note types, and what each one DOES. The lifetime is the point of
 -- asking the player to choose, so the device says it out loud rather than
@@ -1017,6 +1017,10 @@ local SETUP_ROWS = {
       values = { "chronicler", "director" },
       names  = { "chronicler", "director" },
       hint   = "director plans a private long campaign; choose before page one" },
+    { key = "narratorMode", label = "narrator",
+      values = { "classic", "validated" },
+      names  = { "classic", "safe (experimental)" },
+      hint   = "safe mode lets the model choose facts; Java owns the final words" },
     { key = "knowledge", label = "what the story sees",
       values = { 1, 2, 3 },
       names  = { "just me", "a glance", "glance + memory" },
@@ -1047,7 +1051,7 @@ function PZStoryBook:openSetup()
 end
 
 function PZStoryBook:refreshSettings()
-    self.cfg = { campaignMode = "chronicler", knowledge = 3, words = 200, nudge = 2, doom = 3, pause = true,
+    self.cfg = { campaignMode = "chronicler", narratorMode = "classic", knowledge = 3, words = 200, nudge = 2, doom = 3, pause = true,
                  profile = "?", model = "" }
     local f = api("settings")
     if f == nil then return end
@@ -1060,6 +1064,7 @@ function PZStoryBook:refreshSettings()
     self.cfg.pause     = data.pause == true
     self.cfg.nudge     = tonumber(data.nudge) or 2
     self.cfg.doom      = tonumber(data.doom) or 3
+    self.cfg.narratorMode = type(data.narratorMode) == "string" and data.narratorMode or "classic"
     self.cfg.profile   = type(data.profile) == "string" and data.profile or "?"
     self.cfg.model     = type(data.model) == "string" and data.model or ""
     local mf = api("campaignMode")
@@ -1079,6 +1084,7 @@ function PZStoryBook:cycleSetting(row)
 
     local fn
     if r.key == "campaignMode" then fn = api("setCampaignMode")
+    elseif r.key == "narratorMode" then fn = api("setNarratorMode")
     elseif r.key == "knowledge" then fn = api("setKnowledge")
     elseif r.key == "words"  then fn = api("setWords")
     elseif r.key == "nudge"  then fn = api("setNudge")
@@ -1958,6 +1964,7 @@ function PZStoryBook:drain()
     local cRead   = tonumber(data.cacheRead) or 0
     local cWrite  = tonumber(data.cacheWrite) or 0
     local delta   = data.delta
+    local buffered = data.buffered == true
 
     if delta and delta ~= "" then self.chunks = self.chunks + 1 end
 
@@ -1974,7 +1981,11 @@ function PZStoryBook:drain()
     if status == "CONNECTING" then
         self.statusLine = string.format("connecting... %.1fs", elapsed / 1000)
     elseif status == "STREAMING" then
-        self.statusLine = string.format("writing  %d chars  %.1fs", chars, elapsed / 1000)
+        if buffered then
+            self.statusLine = string.format("planning safely... %.1fs", elapsed / 1000)
+        else
+            self.statusLine = string.format("writing  %d chars  %.1fs", chars, elapsed / 1000)
+        end
     elseif status == "RECEIVED" then
         self.statusLine = "checking the finished page..."
     elseif status == "COMMITTING" then
