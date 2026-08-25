@@ -99,6 +99,16 @@ consuming material the constrained renderer cannot yet honour.
   what lets a mod ship Java. Needs a Steam launch option — see its README
 - An API key for one provider (see below), or a local model
 
+## Optional spoken pages (2.1 development)
+
+PZStory detects the separate **PZStory Voice** addon at runtime. When its local
+Piper backend is ready, a `READ` soft key appears for the live page and every
+archived page; while narration is active the key becomes `STOP VOICE`.
+
+The addon is deliberately not listed in `require=`. Players who do not install
+it retain the complete narrator and PDA, with no disabled-mod warning and no
+additional download. Page text remains local to the voice addon.
+
 ## Providers
 
 | Kind | Works with |
@@ -184,15 +194,14 @@ shipping the source beside it.
 ### Versions
 
 Two numbers, because they answer different questions. **Release**
-(`2.0.0`) is for people and changes whenever anything ships. **Bridge API**
+(`2.1.0-alpha.1`) is for people and changes whenever anything ships. **Bridge API**
 (`16`) changes
 when production Lua depends on a new Java method, payload, status or semantic,
 and Lua compares it for exact equality — so a cosmetic release no longer
 forces a firmware mismatch, and an incompatible pairing can no longer load.
 Both live in
 `src/de/fricke/pzstory/Version.java` and are verified at build time.
-The next feature release will be `2.1.0`; compatible fixes to that line will
-use `2.1.1`, `2.1.2`, and so on.
+The stable base remains `2.0.0`; this branch is the `2.1.0` feature line.
 
 > **Java only reloads when Project Zomboid restarts.** Lua reloads when a save
 > loads. During development the two *will* drift, so the device checks the JAR

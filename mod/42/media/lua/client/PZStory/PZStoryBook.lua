@@ -680,6 +680,23 @@ function PZStoryBook:open(forcePause)
     self:pause(forcePause)
 end
 
+--- Optional addon boundary. Never make PZStory Voice a hard mod dependency:
+--- the narrator must remain fully usable when speech is absent or broken.
+local function voiceApi(name)
+    if PZStoryVoice == nil then return nil end
+    local fn = PZStoryVoice[name]
+    if type(fn) == "function" then return fn end
+    return nil
+end
+
+local function voiceReady()
+    local available = voiceApi("isAvailable")
+    if available == nil then return false end
+    local ready = false
+    pcall(function() ready = available() == true end)
+    return ready
+end
+
 function PZStoryBook:pageCount()
     local f, n = api("archiveCount"), 0
     if f then pcall(function() n = tonumber(f()) or 0 end) end
@@ -1675,6 +1692,12 @@ function PZStoryBook:renderSoftKeys()
         local write = first and "RETRY FIRST" or "WRITE NEXT"
         labels = { held > 0 and ("WAIT " .. held) or write,
                    "TO DO", "SETUP" }
+        if voiceReady() and self.pageText ~= nil and self.pageText ~= "" then
+            local state, sf = "", voiceApi("status")
+            if sf then pcall(function() state = sf() or "" end) end
+            table.insert(labels, (state == "queued" or state == "speaking"
+                or state == "stopping") and "STOP VOICE" or "READ")
+        end
         end
     end
 
@@ -1860,7 +1883,8 @@ function PZStoryBook:onMouseUp(x, y)
                     self.statusLine = "stopping..."
                 elseif b.id == 1 then self:writePage()
                 elseif b.id == 2 then self:openTasks()
-                elseif b.id == 3 then self:openSetup() end
+                elseif b.id == 3 then self:openSetup()
+                elseif b.id == 4 then self:toggleVoice() end
             end
             return true
         end
@@ -1930,6 +1954,41 @@ function PZStoryBook:writePage(freshNote)
     self.statusLine = "connecting..."
     if self.entry then self.entry:unfocus(); self.entry:setVisible(false) end
     return true
+end
+
+--- Read exactly the page currently visible, live or archived. The addon owns
+--- synthesis and playback; the PDA only passes its already-sanitised prose.
+function PZStoryBook:toggleVoice()
+    if not voiceReady() then
+        self.statusLine = "voice addon is not ready"
+        return false
+    end
+
+    local state, statusFn = "", voiceApi("status")
+    if statusFn then pcall(function() state = statusFn() or "" end) end
+    if state == "queued" or state == "speaking" or state == "stopping" then
+        local stop = voiceApi("stop")
+        if stop then pcall(stop) end
+        self.statusLine = "narration stopped"
+        return true
+    end
+
+    local speak = voiceApi("speak")
+    if speak == nil then
+        self.statusLine = "voice addon bridge is incomplete"
+        return false
+    end
+    local accepted = false
+    local ok = pcall(function() accepted = speak(self.pageText or "") == true end)
+    if ok and accepted then
+        self.statusLine = "preparing narration..."
+        return true
+    end
+
+    local detail, detailFn = "voice addon could not read this page", voiceApi("detail")
+    if detailFn then pcall(function() detail = detailFn() or detail end) end
+    self.statusLine = tostring(detail)
+    return false
 end
 
 --- A truthful 1993-style boot console. Completed stages get [OK], the active

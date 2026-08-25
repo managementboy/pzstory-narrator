@@ -51,6 +51,17 @@ public final class BridgeContractTest {
         T.ok("failed task edits are not reported as saved",
                 lua.contains("self.statusLine = \"could not save that change\""));
 
+        T.group("Optional voice addon boundary");
+        T.ok("voice addon is detected dynamically",
+                lua.contains("if PZStoryVoice == nil then return nil end")
+                        && lua.contains("voiceApi(\"isAvailable\")"));
+        T.ok("voice addon is not a hard mod dependency",
+                !read("mod/42/mod.info").contains("PZStoryVoice" + "\\nrequire="));
+        T.ok("visible page text crosses the optional bridge",
+                lua.contains("accepted = speak(self.pageText or \"\") == true"));
+        T.ok("active narration can be stopped",
+                lua.contains("STOP VOICE") && lua.contains("voiceApi(\"stop\")"));
+
         T.group("Story request - validation and privacy boundary");
         T.ok("provider state is projected",
                 api.contains("NarrativeState.fromRaw(state)"));
